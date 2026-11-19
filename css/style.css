@@ -251,19 +251,46 @@ body {
   pointer-events: auto;
 }
 .upload:hover { color: var(--ink); }
-.pocket.has-card .upload {
-  inset: 8% 14% auto auto;
-  margin: 0;
-  border-radius: 50%;
+/* a filled pocket has no upload button: its card has its own little buttons instead */
+.pocket.has-card .upload { display: none; }
+/* the buttons over a card, laid over the card's own box */
+.tools {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  height: 94%;
+  aspect-ratio: 63 / 88;
+  pointer-events: none;
+}
+.cardbtn {
+  position: absolute;
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%;
+  padding: 0;
+  color: color-mix(in srgb, var(--ink) 70%, #fff);
   background: rgba(255, 255, 255, .88);
   box-shadow: 0 1px 4px rgba(91, 74, 112, .25);
+  cursor: var(--cursor-link);
+  opacity: 0;
+  pointer-events: none;
 }
+.cardbtn svg { cursor: inherit; }
+.cardbtn:hover { color: var(--ink); background: #fff; }
+.cardbtn.del { top: 6px; left: 6px; }
+.cardbtn.view { bottom: 6px; left: 0; right: 0; margin: 0 auto; }
+.pocket:hover .cardbtn,
+.cardbtn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.cardbtn:focus-visible { outline: 3px solid color-mix(in srgb, var(--ink) 45%, transparent); outline-offset: 2px; }
 .upload:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--ink) 45%, transparent);
   outline-offset: 2px;
 }
 @media (hover: none) {
-  .upload { opacity: .6; pointer-events: auto; }
+  .upload, .cardbtn { opacity: .6; pointer-events: auto; }
 }
 
 /* spine: darker band with a hinge groove */

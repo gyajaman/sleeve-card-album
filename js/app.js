@@ -331,6 +331,8 @@
   const SHEETS = 3;                                  // each sheet has a page on each side
   const TOTAL_PAGES = SHEETS * 2 + 2;                // + one inside the front cover, one on the back board
 
+  const TRASH_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6 7l.9 12a1.5 1.5 0 0 0 1.5 1.4h7.2a1.5 1.5 0 0 0 1.5-1.4L18 7"/><path d="M10 11v5.5M14 11v5.5"/></svg>';
+  const EYE_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>';
   const UPLOAD_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><path d="M7.5 8.5L12 4l4.5 4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>';
 
   // ----- build the pages: 9 pockets (each with a sleeve) plus a shadow layer -----
@@ -734,7 +736,7 @@
   binder.addEventListener("click", (e) => {
     // the click that opens the cover lands on the cover, which is now "open" and over a page's
     // edge: it must not also turn that page
-    if (e.target.closest(".cover > .face.front, .upload") || performance.now() - openedAt < 700) return;
+    if (e.target.closest(".cover > .face.front, .upload, .cardbtn") || performance.now() - openedAt < 700) return;
     const z = hotZone(e.clientX, e.clientY);
     if (z) (z.side ? next : prev)();
   });
@@ -791,9 +793,14 @@
 
   binder.addEventListener("click", (e) => {
     const b = e.target.closest(".upload");
-    if (!b) return;
-    pendingPocket = b.closest(".pocket");
-    fileInput.click();
+    if (b) {
+      pendingPocket = b.closest(".pocket");
+      fileInput.click();
+      return;
+    }
+    const del = e.target.closest(".del");
+    if (del) deleteCard(del.closest(".pocket"));
+    // (.view, the eye, doesn't do anything yet)
   });
 
   fileInput.addEventListener("change", async () => {
@@ -904,7 +911,7 @@
   // then accelerates as it falls, so it arrives at speed and the slide carries on from it.
   const FLIGHT = 640;
   const SLIDE_IN = { duration: 560, easing: "cubic-bezier(.1, .6, .25, 1)" };
-  const SLIDE_OUT = { duration: 260, easing: "cubic-bezier(.5, 0, .8, .5)", fill: "forwards" };
+  const SLIDE_OUT = { duration: 420, easing: "cubic-bezier(.4, 0, .7, .7)", fill: "forwards" };
 
   async function fly(url, from, to, dir) {
     const f = document.createElement("img");
@@ -959,23 +966,13 @@
     const old = slot.querySelector(".card");
     if (old) { URL.revokeObjectURL(old.src); old.remove(); }
     slot.append(cardImage(url));
+    addTools(pocket);
   }
 
   async function placeCard(pocket, url, from) {
     const dir = openSide(pocket);
     const away = `translateX(${dir * 105}%)`;
     const slot = slotOf(pocket);
-    // a card already in the sleeve slides out while the new one is on its way
-    const old = slot.querySelector(".card");
-    let outDone = Promise.resolve();
-    if (old) {
-      const drop = () => { URL.revokeObjectURL(old.src); old.remove(); };
-      if (reduceMotion) drop();
-      else {
-        pocket.style.zIndex = 5;                      // above its neighbours while cards travel
-        outDone = old.animate([{ transform: "none", opacity: 1 }, { transform: away, opacity: 0 }], SLIDE_OUT).finished.then(drop);
-      }
-    }
     const img = cardImage(url);
     await img.decode().catch(() => {});
     img.style.transform = away;                       // where it waits, just outside the open edge
@@ -987,23 +984,62 @@
       pocket.style.zIndex = 5;
       flyer = await fly(url, from, img.getBoundingClientRect(), dir);
     }
-    await outDone;
     img.style.transform = "";
     img.style.visibility = "";
     if (!reduceMotion) {
       img.animate([{ transform: away }, { transform: "none" }], SLIDE_IN)
-        .finished.then(() => { pocket.style.zIndex = ""; }, () => {});
+        .finished.then(() => { pocket.style.zIndex = ""; addTools(pocket); }, () => {});
       playSlide();
-    } else pocket.style.zIndex = "";
+    } else { pocket.style.zIndex = ""; addTools(pocket); }
     if (flyer) flyer.remove();                        // the real card is in exactly the same place
 
-    // a sheet's turning strips are copies of its pages, so they are remade to show the card
+    refreshCurl(pocket, SLIDE_IN.duration + 100);
+  }
+
+  // a sheet's turning strips are copies of its pages, so they are remade when a card comes or goes
+  function refreshCurl(pocket, delay) {
     const s = sheets.find((sh) => sh.el.contains(pocket));
     if (s && s.curlEl) {
       s.curlEl.remove();
       s.curlEl = null;
-      if (!reduceMotion) setTimeout(() => { if (!s.curlEl) buildCurl(s); }, SLIDE_IN.duration + 100);
+      if (!reduceMotion) setTimeout(() => { if (!s.curlEl) buildCurl(s); }, delay);
     }
+  }
+
+  // the little buttons over a card: delete (top left) and view (bottom middle, not wired up yet)
+  function addTools(pocket) {
+    const slot = pocket.querySelector(".slot");
+    if (!slot || slot.querySelector(".tools")) return;
+    const tools = document.createElement("div");
+    tools.className = "tools";
+    tools.innerHTML =
+      `<button class="cardbtn del" type="button" aria-label="Delete card">${TRASH_ICON}</button>` +
+      `<button class="cardbtn view" type="button" aria-label="View card">${EYE_ICON}</button>`;
+    slot.append(tools);
+  }
+
+  // the card slides back out of its sleeve the way it came in, and is forgotten
+  async function deleteCard(pocket) {
+    const slot = pocket.querySelector(".slot");
+    const img = slot && slot.querySelector(".card");
+    if (!img || pocket.deleting) return;
+    pocket.deleting = true;
+    slot.querySelector(".tools")?.remove();
+    dbRun("readwrite", (st) => st.delete(cardKey(pocket)));
+    if (!reduceMotion) {
+      pocket.style.zIndex = 5;                          // above its neighbours while it travels
+      playSlide();
+      await img.animate([
+        { transform: "none", opacity: 1 },
+        { transform: `translateX(${openSide(pocket) * 105}%)`, opacity: 0 },
+      ], SLIDE_OUT).finished.catch(() => {});
+    }
+    URL.revokeObjectURL(img.src);
+    slot.remove();
+    pocket.classList.remove("has-card");
+    pocket.style.zIndex = "";
+    pocket.deleting = false;
+    refreshCurl(pocket, 100);
   }
 
   // ----- open / close the cover; the 18-slot spread is centred -----
