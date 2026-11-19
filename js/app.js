@@ -799,7 +799,7 @@
       return;
     }
     const del = e.target.closest(".del");
-    if (del) deleteCard(del.closest(".pocket"));
+    if (del) askDelete(del.closest(".pocket"));
     // (.view, the eye, doesn't do anything yet)
   });
 
@@ -1017,6 +1017,28 @@
       `<button class="cardbtn view" type="button" aria-label="View card">${EYE_ICON}</button>`;
     slot.append(tools);
   }
+
+  // deleting can't be undone, so ask first. Cancel has the focus, so a stray Enter is safe.
+  const confirmBox = $("confirm");
+  let deleting = null;
+  function askDelete(pocket) {
+    deleting = pocket;
+    confirmBox.hidden = false;
+    cropOpen = true;                                    // the album is locked while the question is up
+    binder.classList.remove("peeking");
+    $("confirmNo").focus();
+  }
+  function answerDelete(yes) {
+    const pocket = deleting;
+    deleting = null;
+    confirmBox.hidden = true;
+    cropOpen = false;
+    if (yes && pocket) deleteCard(pocket);
+  }
+  $("confirmNo").addEventListener("click", () => answerDelete(false));
+  $("confirmYes").addEventListener("click", () => answerDelete(true));
+  confirmBox.addEventListener("click", (e) => { if (e.target === confirmBox) answerDelete(false); });
+  document.addEventListener("keydown", (e) => { if (!confirmBox.hidden && e.key === "Escape") answerDelete(false); });
 
   // the card slides back out of its sleeve the way it came in, and is forgotten
   async function deleteCard(pocket) {

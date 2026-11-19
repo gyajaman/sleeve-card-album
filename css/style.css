@@ -646,6 +646,13 @@ body {
   cursor: var(--cursor-link);
 }
 .btn:hover { background: var(--cover-dark); }
+.btn.danger { background: #f2b3bd; }
+.btn.danger:hover { background: #e99aa8; }
+.confirm-box p {
+  font-size: .9rem;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--ink) 80%, #fff);
+}
 .btn.ghost { background: color-mix(in srgb, var(--bg) 70%, #fff); }
 .btn.ghost:hover { background: var(--bg-dark); }
 .btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--ink) 45%, transparent); outline-offset: 2px; }
