@@ -1314,9 +1314,31 @@
 
   // Pages come two at a time, because a sheet has a side each way. They go in after the last
   // page, ahead of the back board.
+  // Moves every card on one page to the same pocket of another page, saved under its new place.
+  // (The sleeve's inside, with the card and its buttons, is simply carried over.)
+  const realPage = (cast) => cast.parentNode;
+  function moveCards(from, to) {
+    for (let i = 0; i < 9; i++) {
+      const a = from.children[i], b = to.children[i];
+      const slot = a.querySelector(":scope > .slot");
+      if (!slot) continue;
+      const img = slot.querySelector(".card");
+      b.querySelector(".sleeve").after(slot);
+      a.classList.remove("has-card");
+      b.classList.add("has-card");
+      const oldKey = `${from.dataset.page}:${i}`, newKey = cardKey(b);
+      fetch(img.src).then((r) => r.blob()).then((blob) => dbRun("readwrite", (st) => { st.put(blob, newKey); st.delete(oldKey); }));
+    }
+  }
+
+  // New pages go after every page that already exists. The back board's page is always the last one,
+  // so the new sheet takes over the board's cards as its front, and the board (and the new sheet's
+  // back) start empty: nothing you can already see changes.
   function addPages() {
-    if (sheets.length >= MAX_SHEETS) return;
-    setP(addSheet(), 0);
+    if (sheets.length >= MAX_SHEETS || cropOpen || closing) return;
+    const s = addSheet();
+    moveCards(boardCast.parentNode, realPage(s.frontCast));
+    setP(s, 0);
     state.sheets = sheets.length;
     save();
     render();
@@ -1325,11 +1347,13 @@
   }
   $("addBtn").addEventListener("click", addPages);
 
-  // Takes out the last sheet (its two pages). Only from the end, since taking one from the middle
-  // would push every later page's cards onto different pages, and only when those pages are empty:
-  // a page with a card on it can't be removed, so no card is ever lost this way.
-  const sheetHasCards = (s) =>   // only the real pages: the turning strips hold copies of them
-    [s.frontCast, s.backCast].some((cast) => cast.parentNode.querySelector(":scope > .pocket.has-card"));
+  // Takes off the last two pages. Only from the end, since taking some from the middle would push
+  // every later page's cards onto different pages, and only when those two are empty: a page with
+  // a card on it can't be removed, so no card is ever lost this way.
+  // The last two pages are the last sheet's back and the back board; they are the ones that go.
+  // (Only the real pages are looked at: the turning strips hold copies of them.)
+  const anyCard = (page) => !!page.querySelector(":scope > .pocket.has-card");
+  const sheetHasCards = (s) => anyCard(realPage(s.backCast)) || anyCard(boardCast.parentNode);
   function removePages() {
     if (sheets.length <= 1 || closing || dragging || cropOpen) return;
     const s = sheets[sheets.length - 1];
@@ -1343,9 +1367,8 @@
     if (flipped > n) { flipped = n; updatePager(); await animateTo(s, 0, { out: true }); }
     cancelAnimationFrame(s.raf);
     stopPeel(s);
-    s.el.querySelectorAll(".card").forEach((img) => URL.revokeObjectURL(img.src));
-    const pages = [2 * n + 1, 2 * n + 2];
-    dbRun("readwrite", (st) => { for (const p of pages) for (let i = 0; i < 9; i++) st.delete(`${p}:${i}`); });
+    // what is on the sheet's front becomes the back board's page; the two pages that go were empty
+    moveCards(realPage(s.frontCast), boardCast.parentNode);
     s.el.remove();
     sheets.pop();
     state.sheets = sheets.length;
