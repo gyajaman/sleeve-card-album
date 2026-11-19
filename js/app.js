@@ -120,7 +120,7 @@
     if (panelOpen() && !panel.contains(e.target)) setOpen(false);
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
+    if (e.key !== "Escape" || cropOpen) return;
     if (panelOpen()) setOpen(false);
     else if (panel.classList.contains("closing")) return;
     else if (document.activeElement.classList.contains("edit")) return;   // Esc cancels the edit instead
@@ -219,6 +219,36 @@
     sample(bank.page[0], rand(0.99, 1.01), rand(0.95, 1));
   }
 
+  // a card slipping into its sleeve: a soft, dry slide of plastic that fades away. Made on the
+  // fly (no file) from filtered noise.
+  let noise = null;
+  function slideGraph(a, out, t) {
+    if (!noise || noise.sampleRate !== a.sampleRate) {
+      noise = a.createBuffer(1, Math.round(a.sampleRate * 0.7), a.sampleRate);
+      const d = noise.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    const src = a.createBufferSource();
+    src.buffer = noise;
+    const bp = a.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.Q.value = 0.6;
+    bp.frequency.setValueAtTime(2000, t);
+    bp.frequency.exponentialRampToValueAtTime(900, t + 0.5);
+    const g = a.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.15, t + 0.18);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.52);
+    src.connect(bp).connect(g).connect(out);
+    src.start(t);
+    src.stop(t + 0.6);
+  }
+  function playSlide() {
+    if (state.sound === "off") return;
+    const a = audio();
+    slideGraph(a, bus, a.currentTime + 0.01);
+  }
+
   /* ---------------- editable label ---------------- */
   const binder = $("binder");
   const lines = {};
@@ -301,6 +331,8 @@
   const SHEETS = 3;                                  // each sheet has a page on each side
   const TOTAL_PAGES = SHEETS * 2 + 2;                // + one inside the front cover, one on the back board
 
+  const UPLOAD_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><path d="M7.5 8.5L12 4l4.5 4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>';
+
   // ----- build the pages: 9 pockets (each with a sleeve) plus a shadow layer -----
   function fillPage(page, index) {
     page.dataset.page = index;
@@ -309,7 +341,12 @@
       pocket.className = "pocket";
       const sleeve = document.createElement("div");
       sleeve.className = "sleeve";
-      pocket.append(sleeve);
+      const add = document.createElement("button");
+      add.className = "upload";
+      add.type = "button";
+      add.setAttribute("aria-label", "Add a card");
+      add.innerHTML = UPLOAD_ICON;
+      pocket.append(sleeve, add);
       page.append(pocket);
     }
     const cast = document.createElement("div");
@@ -384,6 +421,8 @@
 
   function setP(s, p) {
     s.p = p;
+    const past = p >= 0.5;
+    if (s.past !== past) { s.past = past; s.el.classList.toggle("past", past); }
     s.el.style.transform = `rotateY(${(-p * 180).toFixed(3)}deg)`;
     if (s.curl) {
       // each strip tilts a little more than the one before it, so the paper bends. Early in the
@@ -429,7 +468,7 @@
     const bp = s.el.querySelector(":scope > .face.back > .page");
     const curl = document.createElement("div");
     curl.className = "curl";
-    s.strips = []; s.shades = [];
+    s.strips = []; s.shades = []; s.sfaces = [];
     let parent = curl;
     for (let k = 0; k < STRIPS; k++) {
       const strip = document.createElement("div");
@@ -445,12 +484,23 @@
       strip.append(fr, bk);
       s.strips.push(strip);
       s.shades.push(fr.lastChild, bk.lastChild);
+      s.sfaces.push(fr, bk);
       parent.append(strip);
       parent = strip;
     }
     curl.style.display = "none";
     s.el.append(curl);
     s.curlEl = curl;
+  }
+
+  // The fade is on each strip's faces, never on the .curl itself: anything less than fully opaque
+  // on a 3D group flattens it, and then the strips' back sides stop being hidden, so the other
+  // side's cards flashed through for the duration of the fade.
+  function fadeCurl(s, to, seconds) {
+    for (const f of s.sfaces) {
+      f.style.transition = seconds ? `opacity ${seconds}s linear` : "none";
+      f.style.opacity = to;
+    }
   }
 
   function enterCurl(s) {
@@ -460,14 +510,12 @@
     clearTimeout(s.hideT);
     // fade the strips in over the flat page rather than swapping instantly: the two are drawn
     // by different paths and differ by a few pixels, which would otherwise show as a pop
-    curl.style.transition = "none";
-    curl.style.opacity = "0";
+    fadeCurl(s, 0, 0);
     curl.style.display = "";
     s.curl = curl;
     setP(s, s.p);                                   // pose the strips before they appear
     curl.getBoundingClientRect();
-    curl.style.transition = "opacity .09s linear";
-    curl.style.opacity = "1";
+    fadeCurl(s, 1, 0.09);
     clearTimeout(s.curlT);
     s.curlT = setTimeout(() => s.el.classList.add("curling"), 100);
   }
@@ -479,8 +527,7 @@
     s.curl = null;
     clearTimeout(s.curlT);
     s.el.classList.remove("curling");
-    old.style.transition = "opacity .14s linear";
-    old.style.opacity = "0";
+    fadeCurl(s, 0, 0.14);
     s.hideT = setTimeout(() => { old.style.display = "none"; }, 180);
   }
 
@@ -545,7 +592,7 @@
   }
 
   // ----- peek: near a page's outer edge the page lifts a little and can be clicked to turn -----
-  const HOT = 0.18, PEEK = 0.05;                       // hot-zone width (of a page), max lift (p)
+  const HOT = 0.1, PEEK = 0.05;                       // hot-zone width (of a page), max lift (p)
   function stopPeel(s) { cancelAnimationFrame(s.peelRaf); s.peelRaf = 0; s.peel = 0; s.peelGoal = 0; }
   function peelStep(s, side) {                         // side: 1 = on the right, 0 = on the left
     const cur = s.peel || 0, goal = s.peelGoal || 0;
@@ -562,7 +609,7 @@
   }
   // where is the pointer relative to the spread? returns { side, depth } or null
   function hotZone(x, y) {
-    if (!isOpen() || closing || dragging) return null;
+    if (!isOpen() || closing || dragging || cropOpen) return null;
     const r = binder.getBoundingClientRect();
     if (y < r.top + r.height * 0.03 || y > r.bottom - r.height * 0.03) return null;
     const w = r.width * 0.965;
@@ -622,7 +669,7 @@
   nextBtn.addEventListener("click", next);
   prevBtn.addEventListener("click", prev);
   document.addEventListener("keydown", (e) => {
-    if (document.activeElement && document.activeElement.classList.contains("edit")) return;
+    if (cropOpen || (document.activeElement && document.activeElement.classList.contains("edit"))) return;
     if (e.key === "ArrowRight") next();
     else if (e.key === "ArrowLeft") prev();
   });
@@ -687,10 +734,215 @@
   binder.addEventListener("click", (e) => {
     // the click that opens the cover lands on the cover, which is now "open" and over a page's
     // edge: it must not also turn that page
-    if (e.target.closest(".cover > .face.front") || performance.now() - openedAt < 700) return;
+    if (e.target.closest(".cover > .face.front, .upload") || performance.now() - openedAt < 700) return;
     const z = hotZone(e.clientX, e.clientY);
     if (z) (z.side ? next : prev)();
   });
+
+  // ----- cards: pick a file, crop it to card shape, drop it into the pocket -----
+  const CARD_W = 63, CARD_H = 88, OUT_W = 630, OUT_H = Math.round((OUT_W * CARD_H) / CARD_W);
+  const cropper = $("cropper"), cropFrame = $("cropFrame"), cropCanvas = $("cropCanvas");
+  const cropZoom = $("cropZoom"), fileInput = $("fileInput");
+  let cropOpen = false, crop = null, pendingPocket = null;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  binder.addEventListener("click", (e) => {
+    const b = e.target.closest(".upload");
+    if (!b) return;
+    pendingPocket = b.closest(".pocket");
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    fileInput.value = "";
+    if (!file) return;
+    try { openCropper(await createImageBitmap(file)); }
+    catch { alert("Sorry, that file couldn't be read as an image."); }
+  });
+
+  // the part of the picture inside the frame: the biggest card-shaped area at zoom 1, smaller as you zoom
+  function cropView() {
+    const { bmp, z } = crop, ar = CARD_W / CARD_H;
+    let sw, sh;
+    if (bmp.width / bmp.height > ar) { sh = bmp.height; sw = sh * ar; } else { sw = bmp.width; sh = sw / ar; }
+    sw /= z; sh /= z;
+    crop.cx = clamp(crop.cx, sw / 2, bmp.width - sw / 2);
+    crop.cy = clamp(crop.cy, sh / 2, bmp.height - sh / 2);
+    return { sx: crop.cx - sw / 2, sy: crop.cy - sh / 2, sw, sh };
+  }
+  function drawCrop(ctx, w, h) {
+    const v = cropView();
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(crop.bmp, v.sx, v.sy, v.sw, v.sh, 0, 0, w, h);
+  }
+  function paintCrop() {
+    if (!crop) return;
+    const r = cropFrame.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+    if (cropCanvas.width !== w || cropCanvas.height !== h) { cropCanvas.width = w; cropCanvas.height = h; }
+    drawCrop(cropCanvas.getContext("2d"), w, h);
+  }
+  const setZoom = (v) => { cropZoom.value = clamp(v, 0, 100); crop.z = 1 + cropZoom.value / 100 * 3; paintCrop(); };
+
+  function openCropper(bmp) {
+    crop = { bmp, cx: bmp.width / 2, cy: bmp.height / 2, z: 1 };
+    cropZoom.value = 0;
+    cropper.hidden = false;
+    cropOpen = true;
+    binder.classList.remove("peeking");
+    paintCrop();
+    $("cropDone").focus();
+  }
+  function closeCropper() {
+    cropper.hidden = true;
+    cropOpen = false;
+    if (crop) crop.bmp.close();
+    crop = null;
+  }
+
+  // the dialog fades away while the card flies out of it; input stays locked until the card lands
+  function leaveCropper() {
+    cropper.classList.add("leaving");
+    setTimeout(() => { cropper.hidden = true; cropper.classList.remove("leaving"); }, 320);
+    if (crop) crop.bmp.close();
+    crop = null;
+  }
+
+  cropZoom.addEventListener("input", () => setZoom(+cropZoom.value));
+  cropFrame.addEventListener("wheel", (e) => { e.preventDefault(); setZoom(+cropZoom.value - e.deltaY / 12); }, { passive: false });
+  let panFrom = null;
+  cropFrame.addEventListener("pointerdown", (e) => { panFrom = { x: e.clientX, y: e.clientY }; cropFrame.setPointerCapture(e.pointerId); });
+  cropFrame.addEventListener("pointermove", (e) => {
+    if (!panFrom) return;
+    const k = cropView().sw / cropFrame.clientWidth;      // source pixels per screen pixel
+    crop.cx -= (e.clientX - panFrom.x) * k;
+    crop.cy -= (e.clientY - panFrom.y) * k;
+    panFrom = { x: e.clientX, y: e.clientY };
+    paintCrop();
+  });
+  cropFrame.addEventListener("pointerup", () => { panFrom = null; });
+  cropFrame.addEventListener("pointercancel", () => { panFrom = null; });
+
+  $("cropCancel").addEventListener("click", closeCropper);
+  cropper.addEventListener("click", (e) => { if (e.target === cropper) closeCropper(); });
+  $("cropDone").addEventListener("click", () => {
+    const out = document.createElement("canvas");
+    out.width = OUT_W; out.height = OUT_H;
+    drawCrop(out.getContext("2d"), OUT_W, OUT_H);
+    const pocket = pendingPocket;
+    const from = cropFrame.getBoundingClientRect();      // where the card starts its flight
+    out.toBlob((blob) => { leaveCropper(); setCard(pocket, URL.createObjectURL(blob), from); }, "image/jpeg", 0.9);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (cropper.hidden || cropper.classList.contains("leaving")) return;
+    if (e.key === "Escape") closeCropper();
+    else if (e.key === "Enter" && e.target.tagName !== "BUTTON") $("cropDone").click();
+  });
+  window.addEventListener("resize", paintCrop);
+
+  // which way a sleeve opens, in the page's own frame: +1 = to the right, -1 = to the left. Sleeves
+  // open toward the outer edge, except the outermost column, which opens toward the centre.
+  function openSide(pocket) {
+    const page = pocket.parentNode;
+    const i = [...page.children].indexOf(pocket);
+    const rightPage = page.classList.contains("page-r");
+    const outermost = rightPage ? i % 3 === 2 : i % 3 === 0;
+    return (rightPage ? 1 : -1) * (outermost ? -1 : 1);
+  }
+
+  // The card starts just outside the sleeve's open edge and fades in as it slides in; leaving
+  // takes the same path in reverse.
+  // The card leaves the crop dialog, falls onto the page and comes to rest just outside the
+  // sleeve's open edge; from there it slides in. It starts out of the dialog lifting a little,
+  // then accelerates as it falls, so it arrives at speed and the slide carries on from it.
+  const FLIGHT = 640;
+  const SLIDE_IN = { duration: 560, easing: "cubic-bezier(.1, .6, .25, 1)" };
+  const SLIDE_OUT = { duration: 260, easing: "cubic-bezier(.5, 0, .8, .5)", fill: "forwards" };
+
+  async function fly(url, from, to, dir) {
+    const f = document.createElement("img");
+    f.className = "flyer";
+    f.src = url;
+    f.style.cssText = `left:${from.left}px;top:${from.top}px;width:${from.width}px;height:${from.height}px`;
+    document.body.append(f);
+    const dx = to.left + to.width / 2 - (from.left + from.width / 2);
+    const dy = to.top + to.height / 2 - (from.top + from.height / 2);
+    const k = to.width / from.width;
+    const lift = "0 14px 26px -8px rgba(74, 63, 88, .45)", rest = "0 1px 3px rgba(74, 63, 88, .25)";
+    await f.animate([
+      { transform: "translate(0, 0) scale(1) rotate(0deg)", boxShadow: lift },
+      { transform: `translate(${dx * 0.04}px, ${-14}px) scale(1.05) rotate(${dir * -2}deg)`, boxShadow: lift,
+        offset: 0.2, easing: "cubic-bezier(.5, 0, .8, .6)" },
+      { transform: `translate(${dx}px, ${dy}px) scale(${k}) rotate(0deg)`, boxShadow: rest },
+    ], { duration: FLIGHT, easing: "cubic-bezier(.3, 0, .3, 1)", fill: "forwards" }).finished;
+    return f;
+  }
+
+  // whatever happens, the lock comes off and no flyer is left behind
+  async function setCard(pocket, url, from) {
+    try { await placeCard(pocket, url, from); }
+    finally {
+      cropOpen = false;
+      document.querySelectorAll(".flyer").forEach((f) => f.remove());
+    }
+  }
+
+  async function placeCard(pocket, url, from) {
+    const dir = openSide(pocket);
+    const away = `translateX(${dir * 105}%)`;
+    let slot = pocket.querySelector(".slot");
+    if (!slot) {
+      slot = document.createElement("div");
+      slot.className = "slot";
+      pocket.querySelector(".sleeve").after(slot);
+      pocket.classList.add("has-card");
+    }
+    // a card already in the sleeve slides out while the new one is on its way
+    const old = slot.querySelector(".card");
+    let outDone = Promise.resolve();
+    if (old) {
+      const drop = () => { URL.revokeObjectURL(old.src); old.remove(); };
+      if (reduceMotion) drop();
+      else {
+        pocket.style.zIndex = 5;                      // above its neighbours while cards travel
+        outDone = old.animate([{ transform: "none", opacity: 1 }, { transform: away, opacity: 0 }], SLIDE_OUT).finished.then(drop);
+      }
+    }
+    const img = document.createElement("img");
+    img.className = "card";
+    img.alt = "";
+    img.draggable = false;
+    img.src = url;
+    await img.decode().catch(() => {});
+    img.style.transform = away;                       // where it waits, just outside the open edge
+    img.style.visibility = "hidden";
+    slot.append(img);
+
+    let flyer = null;
+    if (!reduceMotion && from) {
+      pocket.style.zIndex = 5;
+      flyer = await fly(url, from, img.getBoundingClientRect(), dir);
+    }
+    await outDone;
+    img.style.transform = "";
+    img.style.visibility = "";
+    if (!reduceMotion) {
+      img.animate([{ transform: away }, { transform: "none" }], SLIDE_IN)
+        .finished.then(() => { pocket.style.zIndex = ""; }, () => {});
+      playSlide();
+    } else pocket.style.zIndex = "";
+    if (flyer) flyer.remove();                        // the real card is in exactly the same place
+
+    // a sheet's turning strips are copies of its pages, so they are remade to show the card
+    const s = sheets.find((sh) => sh.el.contains(pocket));
+    if (s && s.curlEl) {
+      s.curlEl.remove();
+      s.curlEl = null;
+      if (!reduceMotion) setTimeout(() => { if (!s.curlEl) buildCurl(s); }, SLIDE_IN.duration + 100);
+    }
+  }
 
   // ----- open / close the cover; the 18-slot spread is centred -----
   // The spine is the scene's left edge. Sliding right by half a binder-width puts the spine,
@@ -699,7 +951,7 @@
   function fitSpread() {
     const w = binder.offsetWidth;
     scene.style.setProperty("--open-x", `${w / 2}px`);
-    scene.style.setProperty("--open-s", Math.min(1, (window.innerWidth - 48) / (2 * w)));
+    scene.style.setProperty("--open-s", Math.min(1, (window.innerWidth - 24) / (2 * w)));
   }
 
   let openedAt = 0;
@@ -745,7 +997,7 @@
     if ((e.key === "Enter" || e.key === " ") && e.target === front) { e.preventDefault(); setAlbumOpen(true); }
   });
   // click the empty background to close
-  stage.addEventListener("click", (e) => { if (e.target === stage) setAlbumOpen(false); });
+  stage.addEventListener("click", (e) => { if (e.target === stage && !cropOpen) setAlbumOpen(false); });
   window.addEventListener("resize", fitSpread);
 
   apply();

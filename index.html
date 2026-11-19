@@ -82,6 +82,20 @@
   </div>
 </main>
 
+<input type="file" id="fileInput" accept="image/*" hidden>
+
+<div class="cropper" id="cropper" role="dialog" aria-label="Crop card" hidden>
+  <div class="crop-box">
+    <h2>Crop card</h2>
+    <div class="crop-frame" id="cropFrame"><canvas id="cropCanvas"></canvas></div>
+    <label class="vol">Zoom <input type="range" id="cropZoom" min="0" max="100" step="1" value="0" aria-label="Zoom"></label>
+    <div class="crop-actions">
+      <button class="btn ghost" id="cropCancel">Cancel</button>
+      <button class="btn" id="cropDone">Add card</button>
+    </div>
+  </div>
+</div>
+
 <div class="pager">
   <button id="prevBtn" aria-label="Previous page">
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
