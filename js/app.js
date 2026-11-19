@@ -1396,7 +1396,15 @@
 
   function setAlbumOpen(open) { return open ? openAlbum() : closeAlbum(); }
 
+  // Clicking away from a name you are typing ends the edit (the field loses focus when the mouse goes
+  // down), and that same click must not also open the album. By the time the click arrives the edit is
+  // already over, so remember that the press began while editing.
+  let pressEndedEdit = false;
+  document.addEventListener("pointerdown", (e) => {
+    pressEndedEdit = binder.classList.contains("editing") && !e.target.closest("input.edit");
+  }, true);
   front.addEventListener("click", () => {
+    if (pressEndedEdit) { pressEndedEdit = false; return; }
     if (!binder.classList.contains("editing")) setAlbumOpen(true);
   });
   front.addEventListener("keydown", (e) => {
