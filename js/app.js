@@ -2,7 +2,9 @@
   const DEFAULTS = {
     cover: "#f4b8a8", bg: "#fbeee9", pages: "#ffffff",
     title: "My Cards", sub: "Vol. I", sound: "typewriter", volume: 0.5,
+    sheets: 1,                                        // each sheet is two pages; the album starts with one
   };
+  const MAX_SHEETS = 30;
   const LIMITS = { title: 20, sub: 22 };
   // text shrinks as it gets longer so it always fits on one line: [chars at full size, smallest scale]
   const FIT = { title: [10, 0.5], sub: [14, 0.65] };
@@ -18,9 +20,11 @@
   let state = load();
 
   function load() {
-    let s;
-    try { s = { ...DEFAULTS, ...JSON.parse(localStorage.getItem("sleeve.settings")) }; }
-    catch { s = { ...DEFAULTS }; }
+    let s, saved = null;
+    try { saved = JSON.parse(localStorage.getItem("sleeve.settings")); } catch {}
+    s = { ...DEFAULTS, ...saved };
+    s.hadSheets = !!(saved && "sheets" in saved);     // saves from before pages could be added lack it
+    s.sheets = Math.min(MAX_SHEETS, Math.max(1, Math.round(+s.sheets) || 1));
     // older saves stored sound as a boolean
     if (s.sound === true) s.sound = "typewriter";
     if (s.sound === false) s.sound = "off";
@@ -28,7 +32,7 @@
     return s;
   }
   function save() {
-    try { localStorage.setItem("sleeve.settings", JSON.stringify(state)); } catch {}
+    try { const { hadSheets, ...keep } = state; localStorage.setItem("sleeve.settings", JSON.stringify(keep)); } catch {}
   }
 
   /* ---------------- appearance ---------------- */
@@ -328,8 +332,8 @@
   const cover = $("cover");
   const pageLabel = $("pageLabel"), prevBtn = $("prevBtn"), nextBtn = $("nextBtn");
 
-  const SHEETS = 3;                                  // each sheet has a page on each side
-  const TOTAL_PAGES = SHEETS * 2 + 2;                // + one inside the front cover, one on the back board
+  // a sheet has a page on each side; the album also has a page inside the front cover and one on the back board
+  const totalPages = () => sheets.length * 2 + 2;
 
   const TRASH_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6 7l.9 12a1.5 1.5 0 0 0 1.5 1.4h7.2a1.5 1.5 0 0 0 1.5-1.4L18 7"/><path d="M10 11v5.5M14 11v5.5"/></svg>';
   const EYE_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -368,21 +372,26 @@
     return f;
   };
 
-  // page 0 is inside the front cover (left); the last page is on the back board (right)
+  // page 0 is inside the front cover (left); the page on the back board (right) is called "b", so
+  // it keeps its cards when sheets are added in front of it
   const coverCast = fillPage(binder.querySelector(".face.back .page-l"), 0);
-  const boardCast = fillPage(binder.querySelector(".binder > .page-r"), TOTAL_PAGES - 1);
+  const boardCast = fillPage(binder.querySelector(".binder > .page-r"), "b");
 
   // sheet i: front = page 2i+1 (right side), back = page 2i+2 (left side once turned)
   const sheets = [];
-  for (let i = 0; i < SHEETS; i++) {
+  function addSheet() {
+    const i = sheets.length;
     const el = document.createElement("div");
     el.className = "sheet";
     const pr = makePage("r"), pl = makePage("l");
     el.append(face("front", pr), face("back", pl));
     binder.insertBefore(el, cover);
-    sheets.push({ el, p: 0, raf: 0, moving: false, dir: 1,
-                  frontCast: fillPage(pr, 2 * i + 1), backCast: fillPage(pl, 2 * i + 2) });
+    const s = { el, p: 0, raf: 0, moving: false, dir: 1,
+                frontCast: fillPage(pr, 2 * i + 1), backCast: fillPage(pl, 2 * i + 2) };
+    sheets.push(s);
+    return s;
   }
+  for (let i = 0; i < state.sheets; i++) addSheet();
 
   let flipped = 0;               // how many sheets are (heading) turned over to the left
 
@@ -624,7 +633,7 @@
     const w = r.width * 0.965;
     if (x > r.left && x <= r.left + w) {
       const d = (x - (r.left + w * (1 - HOT))) / (w * HOT);
-      return flipped < SHEETS && d > 0 ? { side: 1, depth: Math.min(1, d) } : null;
+      return flipped < sheets.length && d > 0 ? { side: 1, depth: Math.min(1, d) } : null;
     }
     if (x < r.left && x >= r.left - w) {
       const d = ((r.left - w * (1 - HOT)) - x) / (w * HOT);
@@ -641,7 +650,7 @@
     if (!z) peelLock = false;
     else if (peelLock) z = null;
     binder.classList.toggle("peeking", !!z);
-    const right = flipped < SHEETS ? sheets[flipped] : null;
+    const right = flipped < sheets.length ? sheets[flipped] : null;
     const left = flipped > 0 ? sheets[flipped - 1] : null;
     peelSheet(right, 1, z && z.side === 1 ? PEEK * z.depth : 0);
     peelSheet(left, 0, z && z.side === 0 ? PEEK * z.depth : 0);
@@ -654,15 +663,16 @@
 
   // ----- paging -----
   function updatePager() {
-    pageLabel.textContent = `${2 * flipped + 1}–${2 * flipped + 2} of ${TOTAL_PAGES}`;
+    pageLabel.textContent = `${2 * flipped + 1}–${2 * flipped + 2} of ${totalPages()}`;
     prevBtn.disabled = flipped <= 0;
-    nextBtn.disabled = flipped >= SHEETS;
+    nextBtn.disabled = flipped >= sheets.length;
+    $("addBtn").disabled = sheets.length >= MAX_SHEETS;
   }
   const isOpen = () => binder.classList.contains("open");
   let closing = false, dragging = false;
 
   function next() {
-    if (!isOpen() || closing || dragging || flipped >= SHEETS) return;
+    if (!isOpen() || closing || dragging || flipped >= sheets.length) return;
     peelLock = true;
     animateTo(sheets[flipped], 1);
     flipped++;
@@ -690,7 +700,7 @@
     if (!isOpen() || closing || e.button !== 0) return;
     const rect = binder.getBoundingClientRect();        // left edge = the spine
     const onRightSide = e.clientX > rect.left;
-    if (onRightSide ? flipped >= SHEETS : flipped <= 0) return;
+    if (onRightSide ? flipped >= sheets.length : flipped <= 0) return;
     const width = rect.width * 0.965;                   // one page, as it appears on screen
     const grab = Math.max(0.25, Math.abs(e.clientX - rect.left) / width);  // where on the page it was grabbed
     drag = { id: e.pointerId, startX: e.clientX, spine: rect.left, width, grab, right: onRightSide,
@@ -785,11 +795,32 @@
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   }
 
+  // how many sheets it takes to hold the pages named by these card keys (sheet i holds pages 2i+1, 2i+2)
+  function sheetsFor(keys) {
+    let top = 0;
+    for (const k of keys) { const p = String(k).split(":")[0]; if (p !== "b") top = Math.max(top, +p || 0); }
+    return Math.min(MAX_SHEETS, Math.max(1, Math.ceil(top / 2)));
+  }
+
   // put saved cards back into their pockets (no animation: they were already there)
   async function restoreCards() {
     const saved = await dbRun("readonly", (st) => st.getAll());
     const keys = await dbRun("readonly", (st) => st.getAllKeys());
     if (!saved || !keys) return;
+    // Albums saved before pages could be added had 8 fixed pages, the last one on the back board:
+    // that page was called "7" and is now "b".
+    if (!state.hadSheets) {
+      keys.forEach((key, n) => {
+        const [page, i] = String(key).split(":");
+        if (page === "7") {
+          keys[n] = `b:${i}`;
+          dbRun("readwrite", (st) => { st.put(saved[n], keys[n]); st.delete(key); });
+        }
+      });
+    }
+    const need = sheetsFor(keys);
+    if (need > sheets.length) { while (sheets.length < need) setP(addSheet(), 0); state.sheets = sheets.length; save(); updatePager(); }
+    else if (!state.hadSheets) { state.hadSheets = true; save(); }
     keys.forEach((key, n) => {
       const [page, i] = String(key).split(":");
       const holder = document.querySelector(`.page[data-page="${page}"]`);
@@ -1061,7 +1092,8 @@
     const [keys, blobs] = await Promise.all([dbRun("readonly", (st) => st.getAllKeys()), dbRun("readonly", (st) => st.getAll())]);
     const cards = {};
     for (let i = 0; keys && i < keys.length; i++) cards[keys[i]] = await toDataURL(blobs[i]);
-    const file = { app: BACKUP_APP, version: 1, pages: TOTAL_PAGES, exported: new Date().toISOString(), settings: state, cards };
+    const { hadSheets, ...settings } = state;
+    const file = { app: BACKUP_APP, version: 1, pages: totalPages(), exported: new Date().toISOString(), settings, cards };
     const url = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
     const a = document.createElement("a");
     a.href = url;
@@ -1079,6 +1111,7 @@
     for (const k of ["title", "sub"]) if (typeof s[k] === "string") out[k] = s[k].slice(0, LIMITS[k]);
     if (s.sound === "off" || s.sound === "typewriter") out.sound = s.sound;
     if (typeof s.volume === "number" && s.volume >= 0 && s.volume <= 1) out.volume = s.volume;
+    if (Number.isInteger(s.sheets)) out.sheets = Math.min(MAX_SHEETS, Math.max(1, s.sheets));
     return out;
   }
   async function readBackup(file) {
@@ -1087,12 +1120,14 @@
     if (!data || data.app !== BACKUP_APP || typeof data.cards !== "object" || data.cards === null) throw new Error("not a backup");
     const cards = [];
     for (const [key, url] of Object.entries(data.cards)) {
-      const m = /^(\d+):(\d+)$/.exec(key);
-      if (!m || +m[1] >= TOTAL_PAGES || +m[2] >= 9) continue;                       // a pocket this album doesn't have
+      const m = /^(\d+|b):(\d+)$/.exec(key);
+      if (!m || (m[1] !== "b" && +m[1] > 2 * MAX_SHEETS) || +m[2] >= 9) continue;    // a pocket this album can't have
       if (typeof url !== "string" || !/^data:image\/(jpeg|png|webp);base64,/.test(url)) continue;
       cards.push([key, await (await fetch(url)).blob()]);
     }
-    return { settings: cleanSettings(data.settings), cards };
+    const settings = cleanSettings(data.settings);
+    settings.sheets = Math.max(settings.sheets, sheetsFor(cards.map(([key]) => key)));   // room for every card
+    return { settings, cards };
   }
   async function importAlbum(file) {
     let backup;
@@ -1269,6 +1304,19 @@
     front.setAttribute("aria-label", "");
     updatePager();
   }
+
+  // Pages come two at a time, because a sheet has a side each way. They go in after the last
+  // page, ahead of the back board.
+  function addPages() {
+    if (sheets.length >= MAX_SHEETS) return;
+    setP(addSheet(), 0);
+    state.sheets = sheets.length;
+    save();
+    render();
+    updatePager();
+    if (state.sound !== "off") loadSounds().then(() => play("key"));
+  }
+  $("addBtn").addEventListener("click", addPages);
 
   // closing first turns every page back (top page first), then shuts the cover
   async function closeAlbum() {

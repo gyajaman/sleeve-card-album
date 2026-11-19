@@ -807,6 +807,7 @@ body {
 .pager button:hover:not(:disabled) { background: color-mix(in srgb, var(--cover) 40%, #fff); }
 .pager button:disabled { opacity: .3; cursor: var(--cursor); }
 .pager button:focus-visible { outline: 3px solid color-mix(in srgb, var(--ink) 45%, transparent); outline-offset: 2px; }
+.pager .add { margin-left: 2px; background: color-mix(in srgb, var(--cover) 30%, #fff); }
 .pager span { min-width: 8.5em; text-align: center; font-variant-numeric: tabular-nums; }
 
 
