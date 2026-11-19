@@ -667,6 +667,10 @@
     prevBtn.disabled = flipped <= 0;
     nextBtn.disabled = flipped >= sheets.length;
     $("addBtn").disabled = sheets.length >= MAX_SHEETS;
+    const rm = $("removeBtn"), full = sheets.length > 1 && sheetHasCards(sheets[sheets.length - 1]);
+    rm.disabled = sheets.length <= 1 || full;
+    rm.title = full ? "The last two pages have cards on them. Delete those first." : "Remove the last two pages";
+    rm.setAttribute("aria-label", rm.title);
   }
   const isOpen = () => binder.classList.contains("open");
   let closing = false, dragging = false;
@@ -1007,6 +1011,7 @@
     if (old) { URL.revokeObjectURL(old.src); old.remove(); }
     slot.append(cardImage(url));
     addTools(pocket);
+    updatePager();
   }
 
   async function placeCard(pocket, url, from) {
@@ -1018,6 +1023,7 @@
     img.style.transform = away;                       // where it waits, just outside the open edge
     img.style.visibility = "hidden";
     slot.append(img);
+    updatePager();
 
     let flyer = null;
     if (!reduceMotion && from) {
@@ -1273,6 +1279,7 @@
     pocket.classList.remove("has-card");
     pocket.style.zIndex = "";
     pocket.deleting = false;
+    updatePager();
     refreshCurl(pocket, 100);
   }
 
@@ -1317,6 +1324,37 @@
     if (state.sound !== "off") loadSounds().then(() => play("key"));
   }
   $("addBtn").addEventListener("click", addPages);
+
+  // Takes out the last sheet (its two pages). Only from the end, since taking one from the middle
+  // would push every later page's cards onto different pages, and only when those pages are empty:
+  // a page with a card on it can't be removed, so no card is ever lost this way.
+  const sheetHasCards = (s) =>   // only the real pages: the turning strips hold copies of them
+    [s.frontCast, s.backCast].some((cast) => cast.parentNode.querySelector(":scope > .pocket.has-card"));
+  function removePages() {
+    if (sheets.length <= 1 || closing || dragging || cropOpen) return;
+    const s = sheets[sheets.length - 1];
+    if (s.moving || sheetHasCards(s)) return;
+    dropSheet(s);
+  }
+  async function dropSheet(s) {
+    const n = sheets.indexOf(s);
+    if (n !== sheets.length - 1) return;
+    // if its back is the page showing on the left, turn it back over first so it leaves cleanly
+    if (flipped > n) { flipped = n; updatePager(); await animateTo(s, 0, { out: true }); }
+    cancelAnimationFrame(s.raf);
+    stopPeel(s);
+    s.el.querySelectorAll(".card").forEach((img) => URL.revokeObjectURL(img.src));
+    const pages = [2 * n + 1, 2 * n + 2];
+    dbRun("readwrite", (st) => { for (const p of pages) for (let i = 0; i < 9; i++) st.delete(`${p}:${i}`); });
+    s.el.remove();
+    sheets.pop();
+    state.sheets = sheets.length;
+    save();
+    render();
+    updatePager();
+    if (state.sound !== "off") loadSounds().then(() => play("back"));
+  }
+  $("removeBtn").addEventListener("click", removePages);
 
   // closing first turns every page back (top page first), then shuts the cover
   async function closeAlbum() {

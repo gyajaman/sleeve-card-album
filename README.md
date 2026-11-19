@@ -10,7 +10,8 @@ Open `index.html` through any static server (for example `npx serve` or `python 
 
 - Click a pocket's upload button to add a card: pick an image, crop it to card shape, and it slides in.
 - The eye button lifts a card out for a closer look (drag to tilt it); the bin deletes it.
-- The album starts with 4 pages; the + in the page bar adds two more at a time (up to 62).
+- The album starts with 4 pages; the + in the page bar adds two more at a time (up to 62). The − removes
+  the last two, but only when they have no cards on them.
 - Settings (colours, label, sound) are saved in the browser's localStorage and the cards in IndexedDB,
   so they stay on the device. Settings has Export and Import to save the whole album to a file and
   restore it, for backups or moving to another device.
