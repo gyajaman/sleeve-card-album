@@ -426,6 +426,13 @@
     const past = p >= 0.5;
     if (s.past !== past) { s.past = past; s.el.classList.toggle("past", past); }
     s.el.style.transform = `rotateY(${(-p * 180).toFixed(3)}deg)`;
+    // will-change: transform is only a hint for while the page is moving. Left on permanently it pins
+    // the resolution the page was first drawn at (before the spread scaled to fit), so everything on a
+    // resting page, cards included, was drawn about half a pixel off and softer than anything drawn
+    // fresh at the right scale (the card viewer's copy, for one).
+    s.el.style.willChange = "transform";
+    clearTimeout(s.wcT);
+    s.wcT = setTimeout(() => { s.el.style.willChange = ""; }, 300);
     if (s.curl) {
       // each strip tilts a little more than the one before it, so the paper bends. Early in the
       // turn the outer edge leads, late in the turn it trails; flat at both ends. The lean toward
@@ -800,7 +807,8 @@
     }
     const del = e.target.closest(".del");
     if (del) askDelete(del.closest(".pocket"));
-    // (.view, the eye, doesn't do anything yet)
+    const view = e.target.closest(".view");
+    if (view) openViewer(view.closest(".pocket"));
   });
 
   fileInput.addEventListener("change", async () => {
@@ -834,7 +842,8 @@
     if (cropCanvas.width !== w || cropCanvas.height !== h) { cropCanvas.width = w; cropCanvas.height = h; }
     drawCrop(cropCanvas.getContext("2d"), w, h);
   }
-  const setZoom = (v) => { cropZoom.value = clamp(v, 0, 100); crop.z = 1 + cropZoom.value / 100 * 3; paintCrop(); };
+  const queuePaint = paintCrop;
+  const setZoom = (v) => { cropZoom.value = clamp(v, 0, 100); crop.z = 1 + cropZoom.value / 100 * 3; queuePaint(); };
 
   function openCropper(bmp) {
     crop = { bmp, cx: bmp.width / 2, cy: bmp.height / 2, z: 1 };
@@ -870,7 +879,7 @@
     crop.cx -= (e.clientX - panFrom.x) * k;
     crop.cy -= (e.clientY - panFrom.y) * k;
     panFrom = { x: e.clientX, y: e.clientY };
-    paintCrop();
+    queuePaint();
   });
   cropFrame.addEventListener("pointerup", () => { panFrom = null; });
   cropFrame.addEventListener("pointercancel", () => { panFrom = null; });
@@ -1039,6 +1048,108 @@
   $("confirmYes").addEventListener("click", () => answerDelete(true));
   confirmBox.addEventListener("click", (e) => { if (e.target === confirmBox) answerDelete(false); });
   document.addEventListener("keydown", (e) => { if (!confirmBox.hidden && e.key === "Escape") answerDelete(false); });
+
+  // ----- viewing a card: it lifts out of the album to the middle of the screen, tilts with the
+  // mouse, and goes back to its sleeve when the X is pressed -----
+  const viewer = $("viewer"), vCard = $("vCard"), vTilt = $("vTilt");
+  const VIEW_MOVE = { duration: 520, easing: "cubic-bezier(.25, .8, .25, 1)", fill: "forwards" };
+  const MAX_TILT = 16;
+  let viewing = null, tilt = { tx: 0, ty: 0, x: 0, y: 0, g: 0 }, tiltRaf = 0;
+
+  // The viewer card travels by changing its real position and size (not by being scaled), so on
+  // arrival it is laid out exactly like the card in the sleeve and nothing shifts at the handoff.
+  const boxOf = (r) => ({ left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px" });
+  function tiltLoop() {
+    tilt.x += (tilt.tx - tilt.x) * 0.14;
+    tilt.y += (tilt.ty - tilt.y) * 0.14;
+    vTilt.style.transform = `rotateX(${tilt.y.toFixed(2)}deg) rotateY(${tilt.x.toFixed(2)}deg)`;
+    // keep going only while the card is still moving toward where the mouse points
+    const still = Math.abs(tilt.tx - tilt.x) < 0.01 && Math.abs(tilt.ty - tilt.y) < 0.01;
+    tiltRaf = still ? 0 : requestAnimationFrame(tiltLoop);
+  }
+  const wake = () => { if (!tiltRaf) tiltRaf = requestAnimationFrame(tiltLoop); };
+  function aim(e) {                                      // the mouse decides where the card leans
+    if (!viewing || !viewing.ready) return;
+    const r = vCard.getBoundingClientRect();
+    const nx = clamp((e.clientX - (r.left + r.width / 2)) / (r.width * 0.7), -1, 1);
+    const ny = clamp((e.clientY - (r.top + r.height / 2)) / (r.height * 0.7), -1, 1);
+    tilt.tx = nx * MAX_TILT; tilt.ty = -ny * MAX_TILT;
+    wake();
+  }
+  // the card only leans while it is being dragged, and settles flat again when let go
+  let leaning = false;
+  const letGo = () => { leaning = false; viewer.classList.remove("dragging"); tilt.tx = tilt.ty = 0; wake(); };
+  viewer.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".v-close")) return;
+    leaning = true;
+    viewer.classList.add("dragging");
+    viewer.setPointerCapture(e.pointerId);
+    aim(e);
+  });
+  viewer.addEventListener("pointermove", (e) => { if (leaning) aim(e); });
+  viewer.addEventListener("pointerup", letGo);
+  viewer.addEventListener("pointercancel", letGo);
+
+  async function openViewer(pocket) {
+    const slot = pocket.querySelector(".slot"), img = slot && slot.querySelector(".card");
+    if (!img || viewing || cropOpen) return;
+    cropOpen = true;                                     // the album is locked while a card is out
+    binder.classList.remove("peeking");
+    const from = img.getBoundingClientRect();
+    viewing = { pocket, slot, ready: false };
+    $("vImg").src = img.src;
+    viewer.hidden = false;
+    viewer.classList.remove("ready");
+    void viewer.offsetWidth;
+    viewer.classList.add("shown");
+    slot.style.visibility = "hidden";                    // the card has left its sleeve
+    if (!reduceMotion) {
+      const rest = boxOf(vCard.getBoundingClientRect()), radius = getComputedStyle(vTilt).borderRadius;
+      playSlide();
+      vTilt.animate([{ borderRadius: getComputedStyle(img).borderRadius }, { borderRadius: radius }],
+        { duration: VIEW_MOVE.duration, easing: VIEW_MOVE.easing });
+      await vCard.animate([boxOf(from), rest], VIEW_MOVE).finished.catch(() => {});
+    }
+    vCard.getAnimations().forEach((a) => a.cancel());
+    viewing.ready = true;
+    viewer.classList.add("ready");
+    tilt = { tx: 0, ty: 0, x: 0, y: 0 };
+    vTilt.classList.remove("settling");
+    tiltRaf = 0;
+    $("vClose").focus();
+  }
+
+  async function closeViewer() {
+    if (!viewing || !viewing.ready) return;
+    const { pocket, slot } = viewing;
+    viewing.ready = false;
+    cancelAnimationFrame(tiltRaf);
+    tiltRaf = 0;
+    viewer.classList.remove("ready");
+    vTilt.classList.add("settling");
+    vTilt.style.transform = "none";
+    const img = slot.querySelector(".card");
+    slot.style.visibility = "";
+    const to = img.getBoundingClientRect();
+    slot.style.visibility = "hidden";
+    viewer.classList.remove("shown");
+    if (!reduceMotion) {
+      playSlide();
+      const rest = boxOf(vCard.getBoundingClientRect()), radius = getComputedStyle(vTilt).borderRadius;
+      const close = { ...VIEW_MOVE, duration: 440 };
+      vTilt.animate([{ borderRadius: radius }, { borderRadius: getComputedStyle(img).borderRadius }], close);
+      await vCard.animate([rest, boxOf(to)], close).finished.catch(() => {});
+    }
+    slot.style.visibility = "";
+    viewer.hidden = true;
+    vCard.getAnimations().forEach((a) => a.cancel());
+    vTilt.getAnimations().forEach((a) => a.cancel());
+    vTilt.classList.remove("settling");
+    viewing = null;
+    cropOpen = false;
+  }
+  $("vClose").addEventListener("click", closeViewer);
+  document.addEventListener("keydown", (e) => { if (viewing && e.key === "Escape") closeViewer(); });
 
   // the card slides back out of its sleeve the way it came in, and is forgotten
   async function deleteCard(pocket) {

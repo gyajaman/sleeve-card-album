@@ -635,6 +635,60 @@ body {
   cursor: var(--cursor-link);
 }
 .crop-frame canvas { display: block; width: 100%; height: 100%; cursor: inherit; }
+/* ---------- card viewer ---------- */
+.viewer {
+  --ch: min(calc(100vh - 170px), 620px);
+  --cw: calc(var(--ch) * 63 / 88);
+  position: fixed; inset: 0;
+  z-index: 35;
+  touch-action: none;
+}
+/* only the dimming fades; the card itself stays fully opaque while it flies in and out */
+.viewer::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: rgba(74, 63, 88, .68);                     /* no backdrop blur: it re-blurs the whole 3D album every frame */
+  opacity: 0;
+  transition: opacity .4s;
+}
+.viewer[hidden] { display: none; }
+.viewer.shown::before { opacity: 1; }
+.viewer.ready { cursor: grab; }
+.viewer.ready.dragging { cursor: grabbing; }
+.v-card {
+  position: fixed;
+  left: calc(50% - var(--cw) / 2); top: calc(50% - 32px - var(--ch) / 2);
+  width: var(--cw); height: var(--ch);
+  perspective: 900px;
+}
+.v-tilt {
+  position: relative;
+  width: 100%; height: 100%;
+  border-radius: calc(var(--cw) * .035);
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(91, 74, 112, .25);          /* exactly the shadow of a card in its sleeve, so nothing appears at the handoff */
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.v-tilt.settling { transition: transform .18s ease-out; }
+.v-tilt img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; user-select: none; }
+.v-close {
+  position: fixed;
+  left: 50%; top: calc(50% - 32px + var(--ch) / 2 + 34px);
+  margin-left: -22px;
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%;
+  color: var(--ink);
+  background: rgba(255, 255, 255, .95);
+  box-shadow: 0 6px 16px -6px rgba(0, 0, 0, .4);
+  cursor: var(--cursor-link);
+}
+.v-close:hover { background: #fff; transform: scale(1.06); }
+.viewer .v-close { transition: transform .15s, opacity .25s; }
+.viewer:not(.ready) .v-close { opacity: 0; pointer-events: none; }
+
+.vol[hidden] { display: none; }
 .crop-actions { display: flex; gap: 8px; margin-top: 16px; }
 .btn {
   flex: 1;
@@ -692,7 +746,8 @@ body {
   transform-style: preserve-3d;
   transform-origin: 0 50%;
   /* the turn itself (rotateY 0 = flat on the right, -180deg = flat on the left) is set by the
-     script every frame. The edge at the spine stays put: the page bends away from it. */  will-change: transform;
+     script every frame. The edge at the spine stays put: the page bends away from it. The script
+     adds will-change only while a page is moving (see setP). */
 }
 .sheet .face { inset: 0; border-radius: 0; background: none; box-shadow: none; }
 /* The face turned away from you is hidden outright (the script adds .past once a page is more than
