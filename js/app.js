@@ -119,6 +119,14 @@
       closeT = setTimeout(() => { panel.hidden = true; panel.classList.remove("closing"); }, reduceMotion ? 0 : 180);
     }
   }
+  // A click outside the settings only closes them: it must not also act on whatever is underneath
+  // (close the album, open the cover, turn a page). By the time those handlers run the panel is
+  // already closing, so remember that the press began while it was open.
+  let pressClosedPanel = false;
+  document.addEventListener("pointerdown", (e) => {
+    pressClosedPanel = panelOpen() && !panel.contains(e.target) && !cog.contains(e.target);
+  }, true);
+  document.addEventListener("click", () => setTimeout(() => { pressClosedPanel = false; }, 0), true);
   cog.addEventListener("click", (e) => { e.stopPropagation(); setOpen(!panelOpen()); });
   document.addEventListener("click", (e) => {
     if (panelOpen() && !panel.contains(e.target)) setOpen(false);
@@ -757,7 +765,7 @@
   binder.addEventListener("click", (e) => {
     // the click that opens the cover lands on the cover, which is now "open" and over a page's
     // edge: it must not also turn that page
-    if (e.target.closest(".cover > .face.front, .upload, .cardbtn") || performance.now() - openedAt < 700) return;
+    if (pressClosedPanel || e.target.closest(".cover > .face.front, .upload, .cardbtn") || performance.now() - openedAt < 700) return;
     const z = hotZone(e.clientX, e.clientY);
     if (z) (z.side ? next : prev)();
   });
@@ -1405,13 +1413,14 @@
   }, true);
   front.addEventListener("click", () => {
     if (pressEndedEdit) { pressEndedEdit = false; return; }
+    if (pressClosedPanel) return;
     if (!binder.classList.contains("editing")) setAlbumOpen(true);
   });
   front.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && e.target === front) { e.preventDefault(); setAlbumOpen(true); }
   });
   // click the empty background to close
-  stage.addEventListener("click", (e) => { if (e.target === stage && !cropOpen) setAlbumOpen(false); });
+  stage.addEventListener("click", (e) => { if (e.target === stage && !cropOpen && !pressClosedPanel) setAlbumOpen(false); });
   window.addEventListener("resize", fitSpread);
 
   restoreCards();
