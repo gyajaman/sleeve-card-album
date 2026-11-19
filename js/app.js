@@ -746,6 +746,49 @@
   let cropOpen = false, crop = null, pendingPocket = null;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+  // ----- saving: each cropped card is kept in the browser (IndexedDB) under the pocket it sits in -----
+  // key = "<page number>:<pocket number>", value = the card's JPEG. If the browser won't give us
+  // storage (some private windows), the album still works, it just forgets the cards on reload.
+  const cardDB = new Promise((resolve) => {
+    try {
+      const req = indexedDB.open("sleeve", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("cards");
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+  const cardKey = (pocket) => `${pocket.parentNode.dataset.page}:${[...pocket.parentNode.children].indexOf(pocket)}`;
+  async function dbRun(mode, fn) {
+    const db = await cardDB;
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("cards", mode);
+        const out = fn(tx.objectStore("cards"));
+        tx.oncomplete = () => resolve(out && "result" in out ? out.result : true);
+        tx.onerror = tx.onabort = () => resolve(null);
+      } catch { resolve(null); }
+    });
+  }
+  function saveCard(pocket, blob) {
+    dbRun("readwrite", (st) => st.put(blob, cardKey(pocket)));
+    // ask the browser not to clear the cards when it is short of space
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  }
+
+  // put saved cards back into their pockets (no animation: they were already there)
+  async function restoreCards() {
+    const saved = await dbRun("readonly", (st) => st.getAll());
+    const keys = await dbRun("readonly", (st) => st.getAllKeys());
+    if (!saved || !keys) return;
+    keys.forEach((key, n) => {
+      const [page, i] = String(key).split(":");
+      const holder = document.querySelector(`.page[data-page="${page}"]`);
+      const pocket = holder && holder.children[+i];
+      if (pocket && pocket.classList.contains("pocket")) showCard(pocket, URL.createObjectURL(saved[n]));
+    });
+  }
+
   binder.addEventListener("click", (e) => {
     const b = e.target.closest(".upload");
     if (!b) return;
@@ -833,7 +876,11 @@
     drawCrop(out.getContext("2d"), OUT_W, OUT_H);
     const pocket = pendingPocket;
     const from = cropFrame.getBoundingClientRect();      // where the card starts its flight
-    out.toBlob((blob) => { leaveCropper(); setCard(pocket, URL.createObjectURL(blob), from); }, "image/jpeg", 0.9);
+    out.toBlob((blob) => {
+      saveCard(pocket, blob);
+      leaveCropper();
+      setCard(pocket, URL.createObjectURL(blob), from);
+    }, "image/jpeg", 0.9);
   });
   document.addEventListener("keydown", (e) => {
     if (cropper.hidden || cropper.classList.contains("leaving")) return;
@@ -852,8 +899,6 @@
     return (rightPage ? 1 : -1) * (outermost ? -1 : 1);
   }
 
-  // The card starts just outside the sleeve's open edge and fades in as it slides in; leaving
-  // takes the same path in reverse.
   // The card leaves the crop dialog, falls onto the page and comes to rest just outside the
   // sleeve's open edge; from there it slides in. It starts out of the dialog lifting a little,
   // then accelerates as it falls, so it arrives at speed and the slide carries on from it.
@@ -889,9 +934,8 @@
     }
   }
 
-  async function placeCard(pocket, url, from) {
-    const dir = openSide(pocket);
-    const away = `translateX(${dir * 105}%)`;
+  // the sleeve's inside, made the first time a pocket gets a card
+  function slotOf(pocket) {
     let slot = pocket.querySelector(".slot");
     if (!slot) {
       slot = document.createElement("div");
@@ -899,6 +943,28 @@
       pocket.querySelector(".sleeve").after(slot);
       pocket.classList.add("has-card");
     }
+    return slot;
+  }
+  function cardImage(url) {
+    const img = document.createElement("img");
+    img.className = "card";
+    img.alt = "";
+    img.draggable = false;
+    img.src = url;
+    return img;
+  }
+  // a card simply there, with no animation
+  function showCard(pocket, url) {
+    const slot = slotOf(pocket);
+    const old = slot.querySelector(".card");
+    if (old) { URL.revokeObjectURL(old.src); old.remove(); }
+    slot.append(cardImage(url));
+  }
+
+  async function placeCard(pocket, url, from) {
+    const dir = openSide(pocket);
+    const away = `translateX(${dir * 105}%)`;
+    const slot = slotOf(pocket);
     // a card already in the sleeve slides out while the new one is on its way
     const old = slot.querySelector(".card");
     let outDone = Promise.resolve();
@@ -910,11 +976,7 @@
         outDone = old.animate([{ transform: "none", opacity: 1 }, { transform: away, opacity: 0 }], SLIDE_OUT).finished.then(drop);
       }
     }
-    const img = document.createElement("img");
-    img.className = "card";
-    img.alt = "";
-    img.draggable = false;
-    img.src = url;
+    const img = cardImage(url);
     await img.decode().catch(() => {});
     img.style.transform = away;                       // where it waits, just outside the open edge
     img.style.visibility = "hidden";
@@ -1000,6 +1062,7 @@
   stage.addEventListener("click", (e) => { if (e.target === stage && !cropOpen) setAlbumOpen(false); });
   window.addEventListener("resize", fitSpread);
 
+  restoreCards();
   apply();
   renderLabel();
   fitSpread();
