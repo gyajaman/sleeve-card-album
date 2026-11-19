@@ -577,6 +577,8 @@ body {
   border: 3px solid #fff;
 }
 
+.btn-row { display: flex; gap: 8px; }
+.hint { margin-top: 8px; font-size: .75rem; line-height: 1.35; color: color-mix(in srgb, var(--ink) 65%, #fff); }
 .reset {
   width: 100%;
   padding: 9px;

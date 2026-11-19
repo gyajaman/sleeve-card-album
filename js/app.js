@@ -1029,25 +1029,91 @@
 
   // deleting can't be undone, so ask first. Cancel has the focus, so a stray Enter is safe.
   const confirmBox = $("confirm");
-  let deleting = null;
-  function askDelete(pocket) {
-    deleting = pocket;
+  let onYes = null;
+  function ask(title, text, yesLabel, yes) {
+    onYes = yes;
+    $("confirmTitle").textContent = title;
+    $("confirmText").textContent = text;
+    $("confirmYes").textContent = yesLabel;
     confirmBox.hidden = false;
     cropOpen = true;                                    // the album is locked while the question is up
     binder.classList.remove("peeking");
     $("confirmNo").focus();
   }
-  function answerDelete(yes) {
-    const pocket = deleting;
-    deleting = null;
+  function answer(yes) {
+    const run = onYes;
+    onYes = null;
     confirmBox.hidden = true;
     cropOpen = false;
-    if (yes && pocket) deleteCard(pocket);
+    if (yes && run) run();
   }
-  $("confirmNo").addEventListener("click", () => answerDelete(false));
-  $("confirmYes").addEventListener("click", () => answerDelete(true));
-  confirmBox.addEventListener("click", (e) => { if (e.target === confirmBox) answerDelete(false); });
-  document.addEventListener("keydown", (e) => { if (!confirmBox.hidden && e.key === "Escape") answerDelete(false); });
+  const askDelete = (pocket) => ask("Delete this card?", "Are you sure? This can't be undone, and the card will be removed from your album.", "Delete", () => deleteCard(pocket));
+  $("confirmNo").addEventListener("click", () => answer(false));
+  $("confirmYes").addEventListener("click", () => answer(true));
+  confirmBox.addEventListener("click", (e) => { if (e.target === confirmBox) answer(false); });
+  document.addEventListener("keydown", (e) => { if (!confirmBox.hidden && e.key === "Escape") answer(false); });
+
+  // ----- export / import: the album (settings and every card) as one file -----
+  const BACKUP_APP = "sleeve-card-album";
+  const toDataURL = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
+
+  async function exportAlbum() {
+    const [keys, blobs] = await Promise.all([dbRun("readonly", (st) => st.getAllKeys()), dbRun("readonly", (st) => st.getAll())]);
+    const cards = {};
+    for (let i = 0; keys && i < keys.length; i++) cards[keys[i]] = await toDataURL(blobs[i]);
+    const file = { app: BACKUP_APP, version: 1, pages: TOTAL_PAGES, exported: new Date().toISOString(), settings: state, cards };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `my-album-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  // only values the app itself could have produced are accepted, whatever the file says
+  const isColor = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
+  function cleanSettings(s) {
+    const out = { ...DEFAULTS };
+    if (!s || typeof s !== "object") return out;
+    for (const k of ["cover", "bg", "pages"]) if (isColor(s[k])) out[k] = s[k];
+    for (const k of ["title", "sub"]) if (typeof s[k] === "string") out[k] = s[k].slice(0, LIMITS[k]);
+    if (s.sound === "off" || s.sound === "typewriter") out.sound = s.sound;
+    if (typeof s.volume === "number" && s.volume >= 0 && s.volume <= 1) out.volume = s.volume;
+    return out;
+  }
+  async function readBackup(file) {
+    if (file.size > 300 * 1024 * 1024) throw new Error("too big");
+    const data = JSON.parse(await file.text());
+    if (!data || data.app !== BACKUP_APP || typeof data.cards !== "object" || data.cards === null) throw new Error("not a backup");
+    const cards = [];
+    for (const [key, url] of Object.entries(data.cards)) {
+      const m = /^(\d+):(\d+)$/.exec(key);
+      if (!m || +m[1] >= TOTAL_PAGES || +m[2] >= 9) continue;                       // a pocket this album doesn't have
+      if (typeof url !== "string" || !/^data:image\/(jpeg|png|webp);base64,/.test(url)) continue;
+      cards.push([key, await (await fetch(url)).blob()]);
+    }
+    return { settings: cleanSettings(data.settings), cards };
+  }
+  async function importAlbum(file) {
+    let backup;
+    try { backup = await readBackup(file); }
+    catch { alert("Sorry, that doesn't look like an album file exported from here."); return; }
+    const n = backup.cards.length;
+    ask("Replace your album?", `This file has ${n} card${n === 1 ? "" : "s"}. Importing replaces the cards and settings you have now, and can't be undone.`, "Replace", async () => {
+      const db = await cardDB;
+      if (db) await new Promise((done) => {
+        const tx = db.transaction("cards", "readwrite"), st = tx.objectStore("cards");
+        st.clear();
+        backup.cards.forEach(([key, blob]) => st.put(blob, key));
+        tx.oncomplete = tx.onerror = tx.onabort = () => done();
+      });
+      try { localStorage.setItem("sleeve.settings", JSON.stringify(backup.settings)); } catch {}
+      location.reload();                                // simplest way to show everything fresh
+    });
+  }
+  $("exportBtn").addEventListener("click", exportAlbum);
+  $("importBtn").addEventListener("click", () => $("importInput").click());
+  $("importInput").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) importAlbum(f); });
 
   // ----- viewing a card: it lifts out of the album to the middle of the screen, tilts with the
   // mouse, and goes back to its sleeve when the X is pressed -----

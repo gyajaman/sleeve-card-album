@@ -48,6 +48,15 @@
     <label class="vol">Volume <input type="range" id="volume" min="0" max="100" step="1" aria-label="Typing volume"></label>
   </section>
 
+  <section>
+    <h3>Your album</h3>
+    <div class="btn-row">
+      <button class="reset" id="exportBtn" type="button">Export</button>
+      <button class="reset" id="importBtn" type="button">Import</button>
+    </div>
+    <p class="hint">Saves your cards and settings to a file you can keep, or restores them from one.</p>
+  </section>
+
   <button class="reset" id="reset">Reset colours</button>
 </div>
 
@@ -83,6 +92,7 @@
 </main>
 
 <input type="file" id="fileInput" accept="image/*" hidden>
+<input type="file" id="importInput" accept=".json,application/json" hidden>
 
 <div class="cropper" id="cropper" role="dialog" aria-label="Crop card" hidden>
   <div class="crop-box">
