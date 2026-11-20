@@ -1301,7 +1301,7 @@
   ];
   const nothingTurning = () => !sheets.some((s) => s.moving);
   const inside = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-  const GRAB = 6, EDGE = 0.07, EDGE_WAIT = 600;       // px to pull before it lifts; edge zone; ms to turn
+  const GRAB = 6, EDGE = 0.1, EDGE_WAIT = 600;       // px to pull before it lifts; edge zone; ms to turn
 
   function pocketAt(x, y) {
     if (!nothingTurning()) return null;
@@ -1347,6 +1347,13 @@
     binder.classList.remove("peeking");
     const right = flipped < sheets.length ? sheets[flipped] : null, left = flipped > 0 ? sheets[flipped - 1] : null;
     peelSheet(right, 1, 0); peelSheet(left, 0, 0);
+    carry.hints = [-1, 1].map((sd) => {
+      const h = document.createElement("div");
+      h.className = `edge-hint ${sd === 1 ? "right" : "left"}`;
+      h.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${sd === 1 ? "M9 5l7 7-7 7" : "M15 5l-7 7 7 7"}"/></svg>`;
+      document.body.append(h);
+      return h;
+    });
     carry.active = true;
     playSlide();
     follow(e);
@@ -1369,6 +1376,15 @@
     const r = binder.getBoundingClientRect(), w = r.width * 0.965;
     const side = e.clientX > r.left + w * (1 - EDGE) ? 1 : e.clientX < r.left - w * (1 - EDGE) ? -1 : 0;
     const can = side === 1 ? flipped < sheets.length : side === -1 ? flipped > 0 : false;
+    // edge hints: an arrow strip on each side that has more pages, filling while the card is held there
+    const hints = c.hints;
+    [-1, 1].forEach((sd, k) => {
+      const el = hints[k], ok = sd === 1 ? flipped < sheets.length : flipped > 0;
+      el.classList.toggle("show", ok);
+      el.classList.toggle("on", ok && side === sd && nothingTurning());
+      const bw = w * EDGE;
+      el.style.cssText = `top:${r.top}px;height:${r.height}px;width:${bw}px;left:${sd === 1 ? r.left + w - bw : r.left - w}px`;
+    });
     const now = performance.now();
     if (!can || e.clientY < r.top || e.clientY > r.bottom || !nothingTurning()) c.edge = 0;
     else if (c.edge !== side) { c.edge = side; c.edgeAt = now; }
@@ -1383,6 +1399,7 @@
     cardPress = false;
     binder.classList.remove("carrying");
     if (c.over) c.over.classList.remove("drop");
+    c.hints.forEach((h) => h.remove());
     suppressClick = true; setTimeout(() => { suppressClick = false; }, 0);
     const home = c.pocket, slotA = c.slot, url = c.img.src;
     const target = pocketAt(e.clientX, e.clientY);

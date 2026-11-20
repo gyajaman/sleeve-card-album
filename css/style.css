@@ -610,6 +610,39 @@ body {
   will-change: transform;
   box-shadow: 0 14px 26px -8px rgba(74, 63, 88, .45);
 }
+/* strips at the album's edges while a card is carried: hold the card on one to turn the page */
+.edge-hint {
+  position: fixed;
+  z-index: 39;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  pointer-events: none;
+  overflow: hidden;
+}
+.edge-hint svg { animation: hint-nudge 1.1s ease-in-out infinite; }
+.edge-hint.left svg { animation-name: hint-nudge-l; }
+@keyframes hint-nudge { 50% { transform: translateX(-4px); } }
+@keyframes hint-nudge-l { 50% { transform: translateX(4px); } }
+.edge-hint.show { display: flex; animation: hint-in .25s ease-out; }
+.edge-hint.right { border-radius: 0 10px 10px 0; justify-content: flex-end; padding-right: 6px; }
+.edge-hint.left { border-radius: 10px 0 0 10px; justify-content: flex-start; padding-left: 6px; }
+.edge-hint svg { position: relative; opacity: .8; }
+.edge-hint::after {                       /* fills while the card is held there */
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 0;
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
+  transition: width .15s;
+}
+.edge-hint.right::after { left: 0; }
+.edge-hint.left::after { right: 0; }
+.edge-hint.on::after { width: 100%; transition: width .6s linear; }
+.edge-hint.on svg { opacity: 1; }
+@keyframes hint-in { from { opacity: 0; } to { opacity: 1; } }
 .binder.carrying, .binder.carrying * { cursor: grabbing !important; }
 .pocket.drop .sleeve {
   outline: 2px dashed color-mix(in srgb, var(--ink) 45%, transparent);
