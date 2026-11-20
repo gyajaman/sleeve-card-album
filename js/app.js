@@ -564,7 +564,7 @@
       old.style.display = "none";
       if (s.stale && s.curlEl === old && !s.curl) {          // a card changed while it was turning: remake the copy
         s.stale = false; old.remove(); s.curlEl = null;
-        if (!reduceMotion) setTimeout(() => { if (!s.curlEl && !s.curl) buildCurl(s); }, 100);
+        if (!reduceMotion) rebuildLater(s, 100);
       }
     }, 180);
   }
@@ -1070,8 +1070,17 @@
     if (s && s.curlEl) {
       s.curlEl.remove();
       s.curlEl = null;
-      if (!reduceMotion) setTimeout(() => { if (!s.curlEl) buildCurl(s); }, delay);
+      if (!reduceMotion) rebuildLater(s, delay);
     }
+  }
+  // Making the strips copies the whole page ten times over, so it is done when the browser is idle,
+  // not in the middle of a card landing. (If a page starts turning first, it builds them itself.)
+  function rebuildLater(s, delay) {
+    setTimeout(() => {
+      const go = () => { if (!s.curlEl && !s.curl) buildCurl(s); };
+      if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 2000 });
+      else setTimeout(go, 50);
+    }, Math.max(delay, 400));
   }
 
   // the little buttons over a card: delete (top left) and view (bottom middle, not wired up yet)
@@ -1322,13 +1331,21 @@
   // and its mirror image for the left-hand page, so it still answers while a page is turning: a card
   // can be dropped on the page that is arriving without waiting for it to land.
   const boardPage = () => boardCast.parentNode;
+  // The spread doesn't move while a card is carried, so its measurements are taken once per carry
+  // (reading them on every pointer move forces the browser to lay the page out each time).
+  let geo = null;
+  const G = () => geo || (geo = {
+    r: binder.getBoundingClientRect(),
+    cells: [...boardPage().children].slice(0, 9).map((p) => p.getBoundingClientRect()),
+  });
+  window.addEventListener("resize", () => { geo = null; });
   function gridSlot(x, y) {
-    const spine = binder.getBoundingClientRect().left;
+    const { r, cells } = G();
+    const spine = r.left;
     const left = x < spine;
     const mx = left ? 2 * spine - x : x;
-    const kids = boardPage().children;
     for (let i = 0; i < 9; i++) {
-      if (!inside(kids[i].getBoundingClientRect(), mx, y)) continue;
+      if (!inside(cells[i], mx, y)) continue;
       const row = Math.floor(i / 3), col = i % 3;
       return { side: left ? 0 : 1, index: row * 3 + (left ? 2 - col : col), i };
     }
@@ -1343,8 +1360,8 @@
     const page = pocket.parentNode, idx = [...page.children].indexOf(pocket);
     const row = Math.floor(idx / 3), col = idx % 3;
     const left = page.classList.contains("page-l");
-    const b = boardPage().children[row * 3 + (left ? 2 - col : col)].getBoundingClientRect();
-    const spine = binder.getBoundingClientRect().left;
+    const b = G().cells[row * 3 + (left ? 2 - col : col)];
+    const spine = G().r.left;
     const l = left ? 2 * spine - b.right : b.left;
     const sw = b.width * 0.91, sh = b.height * 0.93;            // the slot: inset 4.5% and 3.5%
     const h = sh * 0.94, w = (h * 63) / 88;
@@ -1358,12 +1375,12 @@
     el.className = "carry";
     el.src = url;
     el.draggable = false;
-    el.style.cssText = `width:${from.width}px;height:${from.height}px;border-radius:${from.radius || 0};transform-origin:0 0`;
+    el.style.cssText = `width:${from.width}px;height:${from.height}px;border-radius:${from.radius || 0}`;
     document.body.append(el);
-    const at = (r, k) => `translate(${r.left}px, ${r.top}px) scale(${k})`;
-    const s = from.scale || 1;           // it was carried a little enlarged
-    const start = { left: from.left - (from.width * (s - 1)) / 2, top: from.top - (from.height * (s - 1)) / 2 };
-    const anim = el.animate([{ transform: at(start, s) }, { transform: at(to, to.width / from.width) }],
+    // positions are of the box's centre, so scaling and turning (about the centre) never shift it
+    const at = (r, k, deg) => `translate(${r.left + r.width / 2 - from.width / 2}px, ${r.top + r.height / 2 - from.height / 2}px) scale(${k}) rotate(${deg}deg)`;
+    // it was carried a little enlarged and leaning: start exactly as it was, so nothing jumps on release
+    const anim = el.animate([{ transform: at(from, from.scale || 1, from.rot || 0) }, { transform: at(to, to.width / from.width, 0) }],
       { duration: ms, easing, fill: "forwards" });
     return anim.finished.catch(() => {}).then(() => el);
   }
@@ -1394,6 +1411,8 @@
     carry.hints = [-1, 1].map((sd) => {
       const h = document.createElement("div");
       h.className = `edge-hint ${sd === 1 ? "right" : "left"}`;
+      const g = G().r, bw = g.width * EDGE;
+      h.style.cssText = `top:${g.top}px;height:${g.height}px;width:${bw}px;left:${sd === 1 ? g.left + g.width - bw : g.left - g.width}px`;
       h.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${sd === 1 ? "M9 5l7 7-7 7" : "M15 5l-7 7 7 7"}"/></svg>`;
       document.body.append(h);
       return h;
@@ -1418,16 +1437,16 @@
     }
     // held at the edge of the spread: turn the page
     // the strips sit on the outer edge of the whole album (its binding), not on the pages inside it
-    const r = binder.getBoundingClientRect(), w = r.width, bw = w * EDGE;
+    const r = G().r, w = r.width, bw = w * EDGE;
     const side = e.clientX > r.left + w - bw ? 1 : e.clientX < r.left - w + bw ? -1 : 0;
     const can = side === 1 ? flipped < sheets.length : side === -1 ? flipped > 0 : false;
     // edge hints: an arrow strip on each side that has more pages, filling while the card is held there
-    const hints = c.hints;
-    [-1, 1].forEach((sd, k) => {
-      const el = hints[k], ok = sd === 1 ? flipped < sheets.length : flipped > 0;
-      el.classList.toggle("show", ok);
-      el.classList.toggle("on", ok && side === sd && nothingTurning());
-      el.style.cssText = `top:${r.top}px;height:${r.height}px;width:${bw}px;left:${sd === 1 ? r.left + w - bw : r.left - w}px`;
+    // (placed once, in pickUp; here only their classes change, and only when they actually change)
+    const turning = !nothingTurning();
+    c.hints.forEach((el, k) => {
+      const sd = k ? 1 : -1, ok = sd === 1 ? flipped < sheets.length : flipped > 0, on = ok && side === sd && !turning;
+      if (el._ok !== ok) { el._ok = ok; el.classList.toggle("show", ok); }
+      if (el._on !== on) { el._on = on; el.classList.toggle("on", on); }
     });
     const now = performance.now();
     if (!can || e.clientY < r.top || e.clientY > r.bottom || !nothingTurning()) c.edge = 0;
@@ -1440,6 +1459,8 @@
   async function putDown(e) {
     const c = carry;
     carry = null;
+    cancelAnimationFrame(c.raf);
+    geo = null;
     cardPress = false;
     binder.classList.remove("carrying");
     if (c.over) c.over.classList.remove("drop");
@@ -1451,7 +1472,7 @@
     if (target && target.deleting) target = null;       // its card is on the way out: not a place to drop
     const radius = c.el.style.borderRadius;
     c.el.remove();
-    const from = { left: e.clientX - c.dx, top: e.clientY - c.dy, width: c.box.width, height: c.box.height, radius, scale: 1.06 };
+    const from = { left: e.clientX - c.dx, top: e.clientY - c.dy, width: c.box.width, height: c.box.height, radius, scale: 1.06, rot: c.lean };
     const ms = reduceMotion ? 1 : 260, ease = "cubic-bezier(.25, .8, .25, 1)";
 
     if (target && target !== home && slotA.isConnected) {
@@ -1509,7 +1530,11 @@
     if (!carry.active) {
       if (Math.hypot(e.clientX - carry.x, e.clientY - carry.y) < GRAB) return;
       pickUp(e);
-    } else follow(e);
+    } else if (!carry.raf) {
+      // at most once a frame: a mouse can report several times per frame, and the card only needs
+      // to be placed for the one that gets drawn
+      carry.raf = requestAnimationFrame(() => { const c = carry; if (c) { c.raf = 0; follow(c.last); } });
+    }
   });
   const endCarry = (e) => {
     if (!carry || e.pointerId !== carry.id) return;
