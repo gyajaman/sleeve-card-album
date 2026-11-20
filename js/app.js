@@ -1675,11 +1675,13 @@
   // click the empty background to close
   // A click is reported on the nearest element holding both where the mouse went down and where it
   // came up, so pressing on the album and letting go on the background looks like a click on the
-  // background. Only a press that also began on the background counts.
-  let downOn = null;
-  document.addEventListener("pointerdown", (e) => { downOn = e.target; }, true);
+  // background, and the same the other way round. Only a click that began AND ended on the
+  // background counts.
+  let downOn = null, upOn = null;
+  document.addEventListener("pointerdown", (e) => { downOn = e.target; upOn = null; }, true);
+  document.addEventListener("pointerup", (e) => { upOn = e.target; }, true);
   stage.addEventListener("click", (e) => {
-    if (e.target === stage && downOn === stage && !cropOpen && !pressClosedPanel) setAlbumOpen(false);
+    if (e.target === stage && downOn === stage && upOn === stage && !cropOpen && !pressClosedPanel) setAlbumOpen(false);
   });
   window.addEventListener("resize", fitSpread);
 
