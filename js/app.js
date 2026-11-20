@@ -1373,8 +1373,9 @@
       if (over && over !== c.pocket) over.classList.add("drop");
     }
     // held at the edge of the spread: turn the page
-    const r = binder.getBoundingClientRect(), w = r.width * 0.965;
-    const side = e.clientX > r.left + w * (1 - EDGE) ? 1 : e.clientX < r.left - w * (1 - EDGE) ? -1 : 0;
+    // the strips sit on the outer edge of the whole album (its binding), not on the pages inside it
+    const r = binder.getBoundingClientRect(), w = r.width, bw = w * EDGE;
+    const side = e.clientX > r.left + w - bw ? 1 : e.clientX < r.left - w + bw ? -1 : 0;
     const can = side === 1 ? flipped < sheets.length : side === -1 ? flipped > 0 : false;
     // edge hints: an arrow strip on each side that has more pages, filling while the card is held there
     const hints = c.hints;
@@ -1382,7 +1383,6 @@
       const el = hints[k], ok = sd === 1 ? flipped < sheets.length : flipped > 0;
       el.classList.toggle("show", ok);
       el.classList.toggle("on", ok && side === sd && nothingTurning());
-      const bw = w * EDGE;
       el.style.cssText = `top:${r.top}px;height:${r.height}px;width:${bw}px;left:${sd === 1 ? r.left + w - bw : r.left - w}px`;
     });
     const now = performance.now();
