@@ -600,6 +600,22 @@ body {
 }
 .cropper[hidden] { display: none; }
 .cropper.leaving { opacity: 0; transition: opacity .3s; pointer-events: none; }
+/* a card picked up to be moved to another pocket */
+.carry {
+  position: fixed;
+  left: 0; top: 0;
+  z-index: 40;
+  object-fit: cover;
+  pointer-events: none;
+  will-change: transform;
+  box-shadow: 0 14px 26px -8px rgba(74, 63, 88, .45);
+}
+.binder.carrying, .binder.carrying * { cursor: grabbing !important; }
+.pocket.drop .sleeve {
+  outline: 2px dashed color-mix(in srgb, var(--ink) 45%, transparent);
+  outline-offset: -4px;
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+}
 .flyer {
   position: fixed;
   z-index: 40;

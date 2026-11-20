@@ -635,7 +635,7 @@
   }
   // where is the pointer relative to the spread? returns { side, depth } or null
   function hotZone(x, y) {
-    if (!isOpen() || closing || dragging || cropOpen) return null;
+    if (!isOpen() || closing || dragging || cropOpen || carry) return null;
     const r = binder.getBoundingClientRect();
     if (y < r.top + r.height * 0.03 || y > r.bottom - r.height * 0.03) return null;
     const w = r.width * 0.965;
@@ -707,9 +707,10 @@
 
   // ----- drag a page: its edge follows the pointer -----
   let drag = null, suppressClick = false;
+  let carry = null, cardPress = false;    // a card being moved; a press that began on a card
 
   binder.addEventListener("pointerdown", (e) => {
-    if (!isOpen() || closing || e.button !== 0) return;
+    if (!isOpen() || closing || e.button !== 0 || cardPress) return;
     const rect = binder.getBoundingClientRect();        // left edge = the spine
     const onRightSide = e.clientX > rect.left;
     if (onRightSide ? flipped >= sheets.length : flipped <= 0) return;
@@ -1290,6 +1291,164 @@
     updatePager();
     refreshCurl(pocket, 100);
   }
+
+  // ----- moving cards: pick one up, carry it (to another page too), drop it on a pocket -----
+  // An empty pocket takes the card; a full one swaps with it. Carrying a card to the edge of the
+  // spread and holding it there turns the page.
+  const visiblePages = () => [
+    flipped > 0 ? realPage(sheets[flipped - 1].backCast) : coverCast.parentNode,
+    flipped < sheets.length ? realPage(sheets[flipped].frontCast) : boardCast.parentNode,
+  ];
+  const nothingTurning = () => !sheets.some((s) => s.moving);
+  const inside = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  const GRAB = 6, EDGE = 0.07, EDGE_WAIT = 600;       // px to pull before it lifts; edge zone; ms to turn
+
+  function pocketAt(x, y) {
+    if (!nothingTurning()) return null;
+    for (const page of visiblePages())
+      for (let i = 0; i < 9; i++) if (inside(page.children[i].getBoundingClientRect(), x, y)) return page.children[i];
+    return null;
+  }
+
+  // the clone of a card, flown from one box to another
+  function glide(url, from, to, ms, easing) {
+    const el = document.createElement("img");
+    el.className = "carry";
+    el.src = url;
+    el.draggable = false;
+    el.style.cssText = `width:${from.width}px;height:${from.height}px;border-radius:${from.radius || 0};transform-origin:0 0`;
+    document.body.append(el);
+    const at = (r, k) => `translate(${r.left}px, ${r.top}px) scale(${k})`;
+    const s = from.scale || 1;           // it was carried a little enlarged
+    const start = { left: from.left - (from.width * (s - 1)) / 2, top: from.top - (from.height * (s - 1)) / 2 };
+    const anim = el.animate([{ transform: at(start, s) }, { transform: at(to, to.width / from.width) }],
+      { duration: ms, easing, fill: "forwards" });
+    return anim.finished.catch(() => {}).then(() => el);
+  }
+
+  function pickUp(e) {
+    const pocket = carry.pocket, img = pocket.querySelector(".slot .card");
+    const r = img.getBoundingClientRect();
+    carry.img = img;
+    carry.box = { left: r.left, top: r.top, width: r.width, height: r.height };
+    carry.dx = e.clientX - r.left;
+    carry.dy = e.clientY - r.top;
+    carry.lean = 0; carry.lastX = e.clientX; carry.last = null;
+    const el = document.createElement("img");
+    el.className = "carry";
+    el.src = img.src;
+    el.draggable = false;
+    el.style.cssText = `width:${r.width}px;height:${r.height}px;border-radius:${getComputedStyle(img).borderRadius}`;
+    document.body.append(el);
+    carry.el = el;
+    carry.slot = img.parentNode;
+    carry.slot.style.visibility = "hidden";             // the card has left its sleeve
+    binder.classList.add("carrying");
+    binder.classList.remove("peeking");
+    const right = flipped < sheets.length ? sheets[flipped] : null, left = flipped > 0 ? sheets[flipped - 1] : null;
+    peelSheet(right, 1, 0); peelSheet(left, 0, 0);
+    carry.active = true;
+    playSlide();
+    follow(e);
+  }
+
+  function follow(e) {
+    const c = carry;
+    c.lean += (Math.max(-9, Math.min(9, (e.clientX - c.lastX) * 0.6)) - c.lean) * 0.35;   // leans into the move
+    c.lastX = e.clientX;
+    c.el.style.transform =
+      `translate(${e.clientX - c.dx}px, ${e.clientY - c.dy}px) scale(1.06) rotate(${c.lean.toFixed(2)}deg)`;
+    // the pocket it would land in
+    const over = pocketAt(e.clientX, e.clientY);
+    if (over !== c.over) {
+      if (c.over) c.over.classList.remove("drop");
+      c.over = over;
+      if (over && over !== c.pocket) over.classList.add("drop");
+    }
+    // held at the edge of the spread: turn the page
+    const r = binder.getBoundingClientRect(), w = r.width * 0.965;
+    const side = e.clientX > r.left + w * (1 - EDGE) ? 1 : e.clientX < r.left - w * (1 - EDGE) ? -1 : 0;
+    const can = side === 1 ? flipped < sheets.length : side === -1 ? flipped > 0 : false;
+    const now = performance.now();
+    if (!can || e.clientY < r.top || e.clientY > r.bottom || !nothingTurning()) c.edge = 0;
+    else if (c.edge !== side) { c.edge = side; c.edgeAt = now; }
+    else if (now - c.edgeAt > EDGE_WAIT) (side === 1 ? next : prev)();
+  }
+  // (the edge wait is checked on every pointer move and on this timer, so holding still still turns it)
+  setInterval(() => { if (carry && carry.active && carry.last) follow(carry.last); }, 120);
+
+  async function putDown(e) {
+    const c = carry;
+    carry = null;
+    cardPress = false;
+    binder.classList.remove("carrying");
+    if (c.over) c.over.classList.remove("drop");
+    suppressClick = true; setTimeout(() => { suppressClick = false; }, 0);
+    const home = c.pocket, slotA = c.slot, url = c.img.src;
+    const target = pocketAt(e.clientX, e.clientY);
+    const radius = c.el.style.borderRadius;
+    c.el.remove();
+    const from = { left: e.clientX - c.dx, top: e.clientY - c.dy, width: c.box.width, height: c.box.height, radius, scale: 1.06 };
+    const ms = reduceMotion ? 1 : 260, ease = "cubic-bezier(.25, .8, .25, 1)";
+
+    if (target && target !== home && slotA.isConnected) {
+      const slotB = target.querySelector(":scope > .slot");
+      const imgB = slotB && slotB.querySelector(".card");
+      const rectB = imgB && imgB.getBoundingClientRect();
+      const keyA = cardKey(home), keyB = cardKey(target);
+      // the sleeves' insides change places
+      if (slotB) { slotB.style.visibility = "hidden"; home.querySelector(".sleeve").after(slotB); }
+      target.querySelector(".sleeve").after(slotA);
+      target.classList.add("has-card");
+      home.classList.toggle("has-card", !!slotB);
+      updatePager();
+      refreshCurl(home, 100); refreshCurl(target, 100);
+      const toA = slotA.querySelector(".card").getBoundingClientRect();
+      const flights = [glide(url, from, toA, ms, ease)];
+      if (imgB) flights.push(glide(imgB.src, { ...rectB.toJSON(), radius }, imgB.getBoundingClientRect(), ms, ease));
+      playSlide();
+      // saved under the new places while they fly
+      Promise.all([fetch(url).then((r) => r.blob()), imgB && fetch(imgB.src).then((r) => r.blob())]).then(([a, b]) =>
+        dbRun("readwrite", (st) => { st.put(a, keyB); b ? st.put(b, keyA) : st.delete(keyA); }));
+      const done = await Promise.all(flights);
+      slotA.style.visibility = "";
+      if (slotB) slotB.style.visibility = "";
+      done.forEach((el) => el.remove());
+    } else if (!reduceMotion && slotA.isConnected && nothingTurning() && visiblePages().includes(home.parentNode)) {
+      const back = c.img.getBoundingClientRect();
+      const el = await glide(url, from, back, ms, ease);
+      slotA.style.visibility = "";
+      el.remove();
+    } else {
+      slotA.style.visibility = "";
+    }
+  }
+
+  binder.addEventListener("pointerdown", (e) => {
+    cardPress = false;
+    if (!isOpen() || closing || cropOpen || carry || e.button !== 0 || !nothingTurning()) return;
+    if (e.target.closest(".cardbtn, .upload") || hotZone(e.clientX, e.clientY)) return;
+    const pocket = pocketAt(e.clientX, e.clientY);
+    const img = pocket && pocket.querySelector(":scope > .slot .card");
+    if (!img || pocket.deleting || !inside(img.getBoundingClientRect(), e.clientX, e.clientY)) return;
+    cardPress = true;                                   // this press belongs to the card, not to the page
+    carry = { id: e.pointerId, x: e.clientX, y: e.clientY, pocket, active: false };
+  }, true);
+  window.addEventListener("pointermove", (e) => {
+    if (!carry || e.pointerId !== carry.id) return;
+    carry.last = e;
+    if (!carry.active) {
+      if (Math.hypot(e.clientX - carry.x, e.clientY - carry.y) < GRAB) return;
+      pickUp(e);
+    } else follow(e);
+  });
+  const endCarry = (e) => {
+    if (!carry || e.pointerId !== carry.id) return;
+    if (!carry.active) { carry = null; cardPress = false; return; }   // just a click
+    putDown(e);
+  };
+  window.addEventListener("pointerup", endCarry);
+  window.addEventListener("pointercancel", endCarry);
 
   // ----- open / close the cover; the 18-slot spread is centred -----
   // The spine is the scene's left edge. Sliding right by half a binder-width puts the spine,
