@@ -479,7 +479,7 @@
     holder.className = "clone";
     holder.style.cssText = `left:${offset}px;width:${w}px;height:${h}px`;
     const copy = page.cloneNode(true);
-    copy.querySelectorAll(".cast").forEach((c) => c.remove());
+    copy.querySelectorAll(".cast, [data-leaving]").forEach((c) => c.remove());
     // A card on its way into (or out of) a sleeve is hidden or offset on the real page. The strips
     // show where cards belong, so they must not copy that, or the card vanishes while the page turns.
     copy.querySelectorAll(".slot, .card").forEach((el) => {
@@ -1286,6 +1286,8 @@
     const img = slot && slot.querySelector(".card");
     if (!img || pocket.deleting) return;
     pocket.deleting = true;
+    slot.dataset.leaving = "1";                          // a turning page's copy must not show a card that is leaving
+    refreshCurl(pocket, 0);
     slot.querySelector(".tools")?.remove();
     dbRun("readwrite", (st) => st.delete(cardKey(pocket)));
     if (!reduceMotion) {
@@ -1412,7 +1414,7 @@
     if (over !== c.over) {
       if (c.over) c.over.classList.remove("drop");
       c.over = over;
-      if (over && over !== c.pocket) over.classList.add("drop");
+      if (over && over !== c.pocket && !over.deleting) over.classList.add("drop");
     }
     // held at the edge of the spread: turn the page
     // the strips sit on the outer edge of the whole album (its binding), not on the pages inside it
@@ -1445,7 +1447,8 @@
     suppressClick = true; setTimeout(() => { suppressClick = false; }, 0);
     const home = c.pocket, slotA = c.slot, url = c.img.src;
     delete slotA.dataset.carried;
-    const target = pocketAt(e.clientX, e.clientY);
+    let target = pocketAt(e.clientX, e.clientY);
+    if (target && target.deleting) target = null;       // its card is on the way out: not a place to drop
     const radius = c.el.style.borderRadius;
     c.el.remove();
     const from = { left: e.clientX - c.dx, top: e.clientY - c.dy, width: c.box.width, height: c.box.height, radius, scale: 1.06 };
@@ -1501,6 +1504,8 @@
   window.addEventListener("pointermove", (e) => {
     if (!carry || e.pointerId !== carry.id) return;
     carry.last = e;
+    // the mouse was let go somewhere we never heard about (outside the window, a dialog): put it down
+    if (carry.active && e.pointerType === "mouse" && e.buttons === 0) { putDown(e); return; }
     if (!carry.active) {
       if (Math.hypot(e.clientX - carry.x, e.clientY - carry.y) < GRAB) return;
       pickUp(e);
