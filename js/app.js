@@ -103,6 +103,16 @@
     apply(); save();
   });
 
+  /* ---------------- clicks ----------------
+     A click is reported on the nearest element that holds both where the mouse went down and where
+     it came up. So pressing inside something (a slider, the crop picture, a card) and letting go
+     outside it looks like a click on whatever contains the two, usually a backdrop. Anything that
+     closes on a click outside itself must check that the press AND the release were both outside. */
+  let downOn = null, upOn = null;
+  document.addEventListener("pointerdown", (e) => { downOn = e.target; upOn = null; }, true);
+  document.addEventListener("pointerup", (e) => { upOn = e.target; }, true);
+  const plainClick = (el, e) => e.target === el && downOn === el && upOn === el;
+
   /* ---------------- settings panel ---------------- */
   const cog = $("cog"), panel = $("panel");
   let closeT = 0;
@@ -129,10 +139,12 @@
   document.addEventListener("click", () => setTimeout(() => { pressClosedPanel = false; }, 0), true);
   cog.addEventListener("click", (e) => { e.stopPropagation(); setOpen(!panelOpen()); });
   document.addEventListener("click", (e) => {
-    if (panelOpen() && !panel.contains(e.target)) setOpen(false);
+    const away = (t) => !t || (!panel.contains(t) && !cog.contains(t));
+    if (panelOpen() && away(e.target) && away(downOn) && away(upOn)) setOpen(false);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || cropOpen) return;
+    if (carry && carry.active) { putDown(carry.last, true); return; }   // Esc puts a carried card back
     if (panelOpen()) setOpen(false);
     else if (panel.classList.contains("closing")) return;
     else if (document.activeElement.classList.contains("edit")) return;   // Esc cancels the edit instead
@@ -720,6 +732,7 @@
   // ----- drag a page: its edge follows the pointer -----
   let drag = null, suppressClick = false;
   let carry = null, cardPress = false;    // a card being moved; a press that began on a card
+  let pressSide = -1;                     // which page edge (1 right, 0 left) a press began on, if any
 
   binder.addEventListener("pointerdown", (e) => {
     if (!isOpen() || closing || e.button !== 0 || cardPress) return;
@@ -780,7 +793,8 @@
     // edge: it must not also turn that page
     if (pressClosedPanel || e.target.closest(".cover > .face.front, .upload, .cardbtn") || performance.now() - openedAt < 700) return;
     const z = hotZone(e.clientX, e.clientY);
-    if (z) (z.side ? next : prev)();
+    // only if the press began on that same edge too (not a press elsewhere that ended there)
+    if (z && z.side === pressSide) (z.side ? next : prev)();
   });
 
   // ----- cards: pick a file, crop it to card shape, drop it into the pocket -----
@@ -941,7 +955,7 @@
   cropFrame.addEventListener("pointercancel", () => { panFrom = null; });
 
   $("cropCancel").addEventListener("click", closeCropper);
-  cropper.addEventListener("click", (e) => { if (e.target === cropper) closeCropper(); });
+  cropper.addEventListener("click", (e) => { if (plainClick(cropper, e)) closeCropper(); });
   $("cropDone").addEventListener("click", () => {
     const out = document.createElement("canvas");
     out.width = OUT_W; out.height = OUT_H;
@@ -1118,7 +1132,7 @@
   const askDelete = (pocket) => ask("Delete this card?", "Are you sure? This can't be undone, and the card will be removed from your album.", "Delete", () => deleteCard(pocket));
   $("confirmNo").addEventListener("click", () => answer(false));
   $("confirmYes").addEventListener("click", () => answer(true));
-  confirmBox.addEventListener("click", (e) => { if (e.target === confirmBox) answer(false); });
+  confirmBox.addEventListener("click", (e) => { if (plainClick(confirmBox, e)) answer(false); });
   document.addEventListener("keydown", (e) => { if (!confirmBox.hidden && e.key === "Escape") answer(false); });
 
   // ----- export / import: the album (settings and every card) as one file -----
@@ -1456,7 +1470,7 @@
   // (the edge wait is checked on every pointer move and on this timer, so holding still still turns it)
   setInterval(() => { if (carry && carry.active && carry.last) follow(carry.last); }, 120);
 
-  async function putDown(e) {
+  async function putDown(e, cancel = false) {
     const c = carry;
     carry = null;
     cancelAnimationFrame(c.raf);
@@ -1468,7 +1482,7 @@
     suppressClick = true; setTimeout(() => { suppressClick = false; }, 0);
     const home = c.pocket, slotA = c.slot, url = c.img.src;
     delete slotA.dataset.carried;
-    let target = pocketAt(e.clientX, e.clientY);
+    let target = cancel ? null : pocketAt(e.clientX, e.clientY);
     if (target && target.deleting) target = null;       // its card is on the way out: not a place to drop
     const radius = c.el.style.borderRadius;
     c.el.remove();
@@ -1514,8 +1528,10 @@
 
   binder.addEventListener("pointerdown", (e) => {
     cardPress = false;
+    const zone = hotZone(e.clientX, e.clientY);
+    pressSide = zone ? zone.side : -1;
     if (!isOpen() || closing || cropOpen || carry || e.button !== 0 || !nothingTurning()) return;
-    if (e.target.closest(".cardbtn, .upload") || hotZone(e.clientX, e.clientY)) return;
+    if (e.target.closest(".cardbtn, .upload") || zone) return;
     const pocket = pocketAt(e.clientX, e.clientY);
     const img = pocket && pocket.querySelector(":scope > .slot .card");
     if (!img || pocket.deleting || !inside(img.getBoundingClientRect(), e.clientX, e.clientY)) return;
@@ -1642,7 +1658,7 @@
 
   // closing first turns every page back (top page first), then shuts the cover
   async function closeAlbum() {
-    if (!isOpen() || closing || dragging) return;
+    if (!isOpen() || closing || dragging || carry) return;
     closing = true;
     root.classList.remove("album-open");
     const back = [];
@@ -1672,16 +1688,9 @@
   front.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && e.target === front) { e.preventDefault(); setAlbumOpen(true); }
   });
-  // click the empty background to close
-  // A click is reported on the nearest element holding both where the mouse went down and where it
-  // came up, so pressing on the album and letting go on the background looks like a click on the
-  // background, and the same the other way round. Only a click that began AND ended on the
-  // background counts.
-  let downOn = null, upOn = null;
-  document.addEventListener("pointerdown", (e) => { downOn = e.target; upOn = null; }, true);
-  document.addEventListener("pointerup", (e) => { upOn = e.target; }, true);
+  // click the empty background to close (the press and the release both on it)
   stage.addEventListener("click", (e) => {
-    if (e.target === stage && downOn === stage && upOn === stage && !cropOpen && !pressClosedPanel) setAlbumOpen(false);
+    if (plainClick(stage, e) && !cropOpen && !pressClosedPanel) setAlbumOpen(false);
   });
   window.addEventListener("resize", fitSpread);
 
