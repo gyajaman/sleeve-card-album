@@ -1673,7 +1673,14 @@
     if ((e.key === "Enter" || e.key === " ") && e.target === front) { e.preventDefault(); setAlbumOpen(true); }
   });
   // click the empty background to close
-  stage.addEventListener("click", (e) => { if (e.target === stage && !cropOpen && !pressClosedPanel) setAlbumOpen(false); });
+  // A click is reported on the nearest element holding both where the mouse went down and where it
+  // came up, so pressing on the album and letting go on the background looks like a click on the
+  // background. Only a press that also began on the background counts.
+  let downOn = null;
+  document.addEventListener("pointerdown", (e) => { downOn = e.target; }, true);
+  stage.addEventListener("click", (e) => {
+    if (e.target === stage && downOn === stage && !cropOpen && !pressClosedPanel) setAlbumOpen(false);
+  });
   window.addEventListener("resize", fitSpread);
 
   restoreCards();
