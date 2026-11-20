@@ -1301,7 +1301,7 @@
   ];
   const nothingTurning = () => !sheets.some((s) => s.moving);
   const inside = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-  const GRAB = 6, EDGE = 0.1, EDGE_WAIT = 600;       // px to pull before it lifts; edge zone; ms to turn
+  const GRAB = 6, EDGE = 0.05, EDGE_WAIT = 250;       // px to pull before it lifts; edge zone; ms to turn
 
   function pocketAt(x, y) {
     if (!nothingTurning()) return null;
