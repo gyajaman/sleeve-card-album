@@ -480,6 +480,9 @@
     holder.style.cssText = `left:${offset}px;width:${w}px;height:${h}px`;
     const copy = page.cloneNode(true);
     copy.querySelectorAll(".cast").forEach((c) => c.remove());
+    // A card on its way into (or out of) a sleeve is hidden or offset on the real page. The strips
+    // show where cards belong, so they must not copy that, or the card vanishes while the page turns.
+    copy.querySelectorAll(".slot, .card").forEach((el) => { el.style.visibility = ""; el.style.transform = ""; });
     holder.append(copy);
     const shade = document.createElement("div");
     shade.className = "shade";
@@ -554,7 +557,13 @@
     clearTimeout(s.curlT);
     s.el.classList.remove("curling");
     fadeCurl(s, 0, 0.14);
-    s.hideT = setTimeout(() => { old.style.display = "none"; }, 180);
+    s.hideT = setTimeout(() => {
+      old.style.display = "none";
+      if (s.stale && s.curlEl === old && !s.curl) {          // a card changed while it was turning: remake the copy
+        s.stale = false; old.remove(); s.curlEl = null;
+        if (!reduceMotion) setTimeout(() => { if (!s.curlEl && !s.curl) buildCurl(s); }, 100);
+      }
+    }, 180);
   }
 
   // ----- animation -----
@@ -1054,6 +1063,7 @@
   // a sheet's turning strips are copies of its pages, so they are remade when a card comes or goes
   function refreshCurl(pocket, delay) {
     const s = sheets.find((sh) => sh.el.contains(pocket));
+    if (s && s.curl) { s.stale = true; return; }          // in use right now: remade when the turn ends
     if (s && s.curlEl) {
       s.curlEl.remove();
       s.curlEl = null;
@@ -1303,12 +1313,39 @@
   const inside = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   const GRAB = 6, EDGE = 0.05, EDGE_WAIT = 250;       // px to pull before it lifts; edge zone; ms to turn
 
-  function pocketAt(x, y) {
-    if (!nothingTurning()) return null;
-    for (const page of visiblePages())
-      for (let i = 0; i < 9; i++) if (inside(page.children[i].getBoundingClientRect(), x, y)) return page.children[i];
+  // Which pocket is under the pointer. Worked out from the back board's page, which never moves,
+  // and its mirror image for the left-hand page, so it still answers while a page is turning: a card
+  // can be dropped on the page that is arriving without waiting for it to land.
+  const boardPage = () => boardCast.parentNode;
+  function gridSlot(x, y) {
+    const spine = binder.getBoundingClientRect().left;
+    const left = x < spine;
+    const mx = left ? 2 * spine - x : x;
+    const kids = boardPage().children;
+    for (let i = 0; i < 9; i++) {
+      if (!inside(kids[i].getBoundingClientRect(), mx, y)) continue;
+      const row = Math.floor(i / 3), col = i % 3;
+      return { side: left ? 0 : 1, index: row * 3 + (left ? 2 - col : col), i };
+    }
     return null;
   }
+  function pocketAt(x, y) {
+    const g = gridSlot(x, y);
+    return g ? visiblePages()[g.side].children[g.index] : null;
+  }
+  // where a card in this pocket comes to rest, as the finished page will have it
+  function restBox(pocket) {
+    const page = pocket.parentNode, idx = [...page.children].indexOf(pocket);
+    const row = Math.floor(idx / 3), col = idx % 3;
+    const left = page.classList.contains("page-l");
+    const b = boardPage().children[row * 3 + (left ? 2 - col : col)].getBoundingClientRect();
+    const spine = binder.getBoundingClientRect().left;
+    const l = left ? 2 * spine - b.right : b.left;
+    const sw = b.width * 0.91, sh = b.height * 0.93;            // the slot: inset 4.5% and 3.5%
+    const h = sh * 0.94, w = (h * 63) / 88;
+    return { left: l + (b.width - w) / 2, top: b.top + (b.height - h) / 2, width: w, height: h };
+  }
+  const settle = async () => { for (let i = 0; i < 60 && !nothingTurning(); i++) await new Promise((r) => setTimeout(r, 50)); };
 
   // the clone of a card, flown from one box to another
   function glide(url, from, to, ms, easing) {
@@ -1411,6 +1448,7 @@
     if (target && target !== home && slotA.isConnected) {
       const slotB = target.querySelector(":scope > .slot");
       const imgB = slotB && slotB.querySelector(".card");
+      const settled = nothingTurning();                 // false if the page is still turning
       const rectB = imgB && imgB.getBoundingClientRect();
       const keyA = cardKey(home), keyB = cardKey(target);
       // the sleeves' insides change places
@@ -1420,14 +1458,15 @@
       home.classList.toggle("has-card", !!slotB);
       updatePager();
       refreshCurl(home, 100); refreshCurl(target, 100);
-      const toA = slotA.querySelector(".card").getBoundingClientRect();
+      const toA = settled ? slotA.querySelector(".card").getBoundingClientRect() : restBox(target);
       const flights = [glide(url, from, toA, ms, ease)];
-      if (imgB) flights.push(glide(imgB.src, { ...rectB.toJSON(), radius }, imgB.getBoundingClientRect(), ms, ease));
+      if (imgB && settled) flights.push(glide(imgB.src, { ...rectB.toJSON(), radius }, imgB.getBoundingClientRect(), ms, ease));
       playSlide();
       // saved under the new places while they fly
       Promise.all([fetch(url).then((r) => r.blob()), imgB && fetch(imgB.src).then((r) => r.blob())]).then(([a, b]) =>
         dbRun("readwrite", (st) => { st.put(a, keyB); b ? st.put(b, keyA) : st.delete(keyA); }));
       const done = await Promise.all(flights);
+      await settle();                                   // the card waits above the page until it has landed
       slotA.style.visibility = "";
       if (slotB) slotB.style.visibility = "";
       done.forEach((el) => el.remove());
