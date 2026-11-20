@@ -482,7 +482,10 @@
     copy.querySelectorAll(".cast").forEach((c) => c.remove());
     // A card on its way into (or out of) a sleeve is hidden or offset on the real page. The strips
     // show where cards belong, so they must not copy that, or the card vanishes while the page turns.
-    copy.querySelectorAll(".slot, .card").forEach((el) => { el.style.visibility = ""; el.style.transform = ""; });
+    copy.querySelectorAll(".slot, .card").forEach((el) => {
+      if (el.closest("[data-carried]")) return;          // a card in someone's hand isn't on the page
+      el.style.visibility = ""; el.style.transform = "";
+    });
     holder.append(copy);
     const shade = document.createElement("div");
     shade.className = "shade";
@@ -1380,6 +1383,8 @@
     carry.el = el;
     carry.slot = img.parentNode;
     carry.slot.style.visibility = "hidden";             // the card has left its sleeve
+    carry.slot.dataset.carried = "1";                   // (a turning page's copy must leave it out too)
+    refreshCurl(pocket, 0);                             // the page's copy still shows the card: remake it without
     binder.classList.add("carrying");
     binder.classList.remove("peeking");
     const right = flipped < sheets.length ? sheets[flipped] : null, left = flipped > 0 ? sheets[flipped - 1] : null;
@@ -1439,6 +1444,7 @@
     c.hints.forEach((h) => h.remove());
     suppressClick = true; setTimeout(() => { suppressClick = false; }, 0);
     const home = c.pocket, slotA = c.slot, url = c.img.src;
+    delete slotA.dataset.carried;
     const target = pocketAt(e.clientX, e.clientY);
     const radius = c.el.style.borderRadius;
     c.el.remove();
@@ -1471,11 +1477,13 @@
       if (slotB) slotB.style.visibility = "";
       done.forEach((el) => el.remove());
     } else if (!reduceMotion && slotA.isConnected && nothingTurning() && visiblePages().includes(home.parentNode)) {
+      refreshCurl(home, 100);
       const back = c.img.getBoundingClientRect();
       const el = await glide(url, from, back, ms, ease);
       slotA.style.visibility = "";
       el.remove();
     } else {
+      refreshCurl(home, 100);
       slotA.style.visibility = "";
     }
   }
